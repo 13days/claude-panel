@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Panel</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1d212b; --border: #2a2f3a;
+    --text: #e6e9ef; --muted: #8b93a5; --accent: #d97b4f; --accent2: #e8965f;
+    --danger: #e05d5d; --green: #4fae7a; --code-bg: #12141a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; }
+
+  /* ---------- 侧栏 ---------- */
+  #sidebar { width: 300px; min-width: 300px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+  #logo { padding: 18px 16px 12px; font-size: 17px; font-weight: 700; letter-spacing: .5px; display: flex; align-items: center; }
+  #logo span { color: var(--accent); margin-left: 4px; }
+  #langSel { padding: 6px 8px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font-size: 12.5px; cursor: pointer; outline: none; }
+  #langSel:hover, #langSel:focus { border-color: var(--accent); }
+  #tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 12px; }
+  .tab { flex: 1 1 28%; text-align: center; padding: 7px 0; border-radius: 8px; cursor: pointer; font-size: 13px; color: var(--muted); background: var(--panel2); border: 1px solid transparent; user-select: none; white-space: nowrap; }
+  .tab.active { color: var(--text); border-color: var(--accent); background: rgba(217,123,79,.12); }
+  .tab .cnt { font-size: 11px; opacity: .75; margin-left: 3px; }
+  #searchbox { padding: 0 12px 10px; }
+  #search { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font-size: 13px; outline: none; }
+  #search:focus { border-color: var(--accent); }
+  #projbar { padding: 0 12px 10px; }
+  #projSel { width: 100%; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font-size: 12.5px; outline: none; cursor: pointer; }
+  #projSel:hover, #projSel:focus { border-color: var(--accent); }
+
+  /* ---------- 统计仪表盘 ---------- */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .card .v { font-size: 23px; font-weight: 700; }
+  .card .k { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .chart { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .chart h3 { font-size: 13.5px; margin: 0 0 14px; }
+  .chartHead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 8px; }
+  .chartHead h3 { margin: 0; }
+  .range { display: flex; gap: 4px; }
+  .rangebtn { padding: 3px 10px; border-radius: 14px; font-size: 11.5px; color: var(--muted); background: var(--panel2); border: 1px solid var(--border); cursor: pointer; }
+  .rangebtn.active { color: var(--text); border-color: var(--accent); background: rgba(217,123,79,.12); }
+  #tip { position: fixed; display: none; background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 8px; font-size: 12px; pointer-events: none; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,.5); white-space: nowrap; font-family: ui-monospace, monospace; }
+  .bars { display: flex; align-items: flex-end; gap: 2px; height: 120px; padding-top: 16px; }
+  .bars .b { flex: 1; background: #3987e5; border-radius: 3px 3px 0 0; min-height: 2px; position: relative; }
+  .bars .b:hover { background: #86b6ef; }
+  .bars .b .lbl { position: absolute; top: -16px; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--muted); white-space: nowrap; }
+  .axis { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--muted); margin-top: 6px; }
+  .hbar-row { display: flex; align-items: center; gap: 10px; margin: 7px 0; }
+  .hbar-name { width: 230px; text-align: right; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; font-size: 11.5px; }
+  .hbar-track { flex: 1; }
+  .hbar-fill { height: 14px; border-radius: 0 3px 3px 0; min-width: 2px; }
+  .hbar-val { width: 80px; font-size: 11.5px; color: var(--muted); }
+  /* 列宽按内容自适应：width:max-content 让每列撑到内容宽度，min-width 保证撑满容器，超宽由外层容器横向滚动 */
+  table.usage { border-collapse: collapse; width: max-content; min-width: 100%; font-size: 12.5px; }
+  table.usage th, table.usage td { border: 1px solid var(--border); padding: 5px 10px; text-align: left; vertical-align: top; white-space: nowrap; font-size: 12px; }
+  table.usage th { background: var(--panel2); }
+  table.usage td.num, table.usage th.num { text-align: right; font-family: ui-monospace, monospace; }
+  table.usage tr.total td { font-weight: 700; background: var(--panel2); }
+
+  #filterbar { display: flex; gap: 6px; padding: 0 12px 10px; }
+  .fbtn { padding: 4px 12px; border-radius: 20px; font-size: 12px; color: var(--muted); background: var(--panel2); border: 1px solid var(--border); cursor: pointer; user-select: none; }
+  .fbtn.active { color: var(--text); border-color: var(--accent); background: rgba(217,123,79,.12); }
+  .tag { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 10px; margin-left: 6px; vertical-align: 2px; border: 1px solid var(--border); color: var(--muted); }
+  .tag.installed { border-color: #4a72b5; color: #7fa3d9; }
+  .tag.user { border-color: var(--green); color: var(--green); }
+  #list { flex: 1; overflow-y: auto; padding: 0 8px 8px; }
+  .item { padding: 9px 10px; border-radius: 8px; cursor: pointer; margin-bottom: 2px; }
+  .item:hover { background: var(--panel2); }
+  .item.active { background: rgba(217,123,79,.15); outline: 1px solid rgba(217,123,79,.4); }
+  .item .nm { font-size: 13.5px; font-weight: 600; font-family: ui-monospace, monospace; }
+  .item .ds { font-size: 12px; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  #newbtn { margin: 8px 12px 14px; padding: 9px; border-radius: 8px; border: 1px dashed var(--border); background: none; color: var(--accent2); font-size: 13px; cursor: pointer; }
+  #newbtn:hover { border-color: var(--accent); background: rgba(217,123,79,.08); }
+
+  /* ---------- 主区 ---------- */
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #toolbar { display: flex; align-items: center; gap: 8px; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  #title { font-size: 15px; font-weight: 700; font-family: ui-monospace, monospace; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #fpath { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 8px; }
+  .btn { padding: 7px 14px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font-size: 13px; cursor: pointer; white-space: nowrap; }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: var(--accent2); }
+  .btn.danger { color: var(--danger); }
+  .btn.danger:hover { border-color: var(--danger); }
+  .btn:disabled { opacity: .4; cursor: default; }
+  #content { flex: 1; overflow-y: auto; padding: 24px 32px; }
+  #empty { color: var(--muted); text-align: center; margin-top: 20vh; font-size: 14px; }
+  #editor { display: none; width: 100%; height: 100%; resize: none; background: var(--code-bg); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 16px; font-family: ui-monospace, "SF Mono", monospace; font-size: 13px; line-height: 1.6; outline: none; }
+  #editor:focus { border-color: var(--accent); }
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--panel2); border: 1px solid var(--border); padding: 10px 20px; border-radius: 10px; font-size: 13px; display: none; z-index: 99; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+
+  /* ---------- frontmatter 元信息 ---------- */
+  #metabar { display: none; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+  .chip { font-size: 12px; padding: 4px 10px; border-radius: 20px; background: var(--panel2); border: 1px solid var(--border); color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip b { color: var(--accent2); font-weight: 600; margin-right: 4px; }
+
+  /* ---------- markdown 渲染 ---------- */
+  #render { max-width: 860px; line-height: 1.7; font-size: 14.5px; }
+  #render.wide { max-width: none; }  /* 统计仪表盘用全宽 */
+  #render h1 { font-size: 24px; margin: 18px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  #render h2 { font-size: 19px; margin: 20px 0 10px; }
+  #render h3 { font-size: 16px; margin: 16px 0 8px; }
+  #render h4 { font-size: 14.5px; margin: 14px 0 6px; }
+  #render p { margin: 8px 0; }
+  #render ul, #render ol { margin: 8px 0 8px 24px; }
+  #render li { margin: 3px 0; }
+  #render code { background: var(--code-bg); border: 1px solid var(--border); padding: 1px 6px; border-radius: 5px; font-family: ui-monospace, monospace; font-size: 13px; color: #f0b27a; }
+  #render pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow-x: auto; margin: 12px 0; }
+  #render pre code { background: none; border: none; padding: 0; color: #cdd6e4; }
+  #render blockquote { border-left: 3px solid var(--accent); padding: 4px 14px; color: var(--muted); margin: 10px 0; background: rgba(217,123,79,.05); border-radius: 0 8px 8px 0; }
+  #render table { border-collapse: collapse; margin: 12px 0; display: block; overflow-x: auto; max-width: 100%; }
+  #render th, #render td { border: 1px solid var(--border); padding: 6px 12px; font-size: 13.5px; text-align: left; }
+  #render th { background: var(--panel2); }
+  #render a { color: var(--accent2); }
+  #render hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+  #render img { max-width: 100%; }
+
+  /* ---------- 新建弹窗 ---------- */
+  #modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 50; align-items: center; justify-content: center; }
+  #modal .box { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 24px; width: 420px; }
+  #modal h3 { font-size: 16px; margin-bottom: 16px; }
+  #modal input { width: 100%; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font-size: 14px; outline: none; font-family: ui-monospace, monospace; }
+  #modal input:focus { border-color: var(--accent); }
+  #modal .hint { font-size: 12px; color: var(--muted); margin: 8px 0 16px; }
+  #modal .row { display: flex; gap: 10px; justify-content: flex-end; }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div id="logo">⌘ Claude <span>Panel</span></div>
+  <div id="tabs">
+    <div class="tab" data-type="commands">/ 命令<span class="cnt"></span></div>
+    <div class="tab" data-type="skills">Skills<span class="cnt"></span></div>
+    <div class="tab" data-type="agents">Agents<span class="cnt"></span></div>
+    <div class="tab" data-type="plugins">插件<span class="cnt"></span></div>
+    <div class="tab" data-type="config">配置<span class="cnt"></span></div>
+    <div class="tab" data-type="workflows">工作流<span class="cnt"></span></div>
+    <div class="tab" data-type="sessions">会话<span class="cnt"></span></div>
+    <div class="tab" data-type="stats">统计<span class="cnt"></span></div>
+  </div>
+  <div id="projbar"><select id="projSel"></select></div>
+  <div id="searchbox"><input id="search" placeholder="搜索名称 / 描述…"></div>
+  <div id="filterbar">
+    <div class="fbtn active" data-origin="user">仅自建</div>
+    <div class="fbtn" data-origin="all">全部</div>
+  </div>
+  <div id="list"></div>
+  <button id="newbtn">＋ 新建</button>
+</div>
+
+<div id="main">
+  <div id="toolbar">
+    <div id="title">未选择<span id="fpath"></span></div>
+    <button class="btn" id="editBtn" disabled>编辑</button>
+    <button class="btn primary" id="saveBtn" style="display:none">保存</button>
+    <button class="btn" id="cancelBtn" style="display:none">取消</button>
+    <button class="btn danger" id="delBtn" disabled>删除</button>
+    <select id="langSel" title="Language"></select>
+  </div>
+  <div id="content">
+    <div id="empty">← 从左侧选择一个资源，或点击「新建」</div>
+    <div id="metabar"></div>
+    <div id="render"></div>
+    <textarea id="editor" spellcheck="false"></textarea>
+  </div>
+</div>
+
+<div id="modal">
+  <div class="box">
+    <h3 id="modalTitle">新建</h3>
+    <input id="newName" placeholder="名称（如 my-command）">
+    <div class="hint" id="modalHint"></div>
+    <div class="row">
+      <button class="btn" id="modalCancel" onclick="closeModal()">取消</button>
+      <button class="btn primary" id="modalCreate" onclick="createItem()">创建</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+<div id="tip"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+
+// ---------- i18n 框架 ----------
+// 新增语言三步：1) LANGS 注册 code+label（出现在右上角下拉框）
+//              2) I18N 里加同名字典（可只翻译一部分，缺失 key 自动回退 en → 默认语言）
+//              3) 后端 server.js 的 STRINGS 里加同名字典（同样支持部分翻译）
+const LANGS = [
+  { code: 'zh', label: '中文' },
+  { code: 'en', label: 'English' },
+  { code: 'ja', label: '日本語' },
+];
+const DEFAULT_LANG = 'zh';
+const I18N = {
+  zh: {
+    tabs: { commands: '/ 命令', skills: '技能', agents: '智能体', plugins: '插件', config: '配置', workflows: '工作流', sessions: '会话', stats: '统计' },
+    typeLabel: { commands: '命令', skills: '技能', agents: '智能体', plugins: '插件', config: '配置', workflows: '工作流', sessions: '会话', stats: '统计' },
+    search: '搜索名称 / 描述…', mineOnly: '仅自建', all: '全部',
+    newBtn: '＋ 新建', edit: '编辑', save: '保存', cancel: '取消', del: '删除', uninstall: '卸载', create: '创建',
+    noSelection: '未选择', emptyHint: '← 从左侧选择一个资源，或点击「新建」',
+    newTitle: '新建{label}', namePh: '名称（如 my-command）', nameRequired: '请输入名称',
+    hintSkills: '将创建 ~/.claude/skills/<名称>/SKILL.md', hintFlat: '将创建 ~/.claude/{type}/<名称>.md',
+    hintWorkflows: '将创建 ~/.claude/workflows/<名称>.js（可用 Workflow 工具按名称调用）',
+    saved: '已保存 ✓', deleted: '已删除', created: '已创建 ✓',
+    loadFail: '加载失败: ', saveFail: '保存失败: ', delFail: '删除失败: ', createFail: '创建失败: ',
+    unsaved: '当前有未保存的编辑，确定放弃吗？',
+    noteBuiltin: ' · 内置命令（只读）', notePluginCmd: ' · 插件提供（只读）',
+    notePlugin: ' · 已安装插件（删除 = 卸载）', noteInstalled: ' · 已安装（软链接，只读）',
+    tagBuiltin: '内置', tagInstalled: '安装', tagPluginPrefix: '插件:',
+    confirmDel: '确定删除{label}「{name}」吗？\n{detail}',
+    confirmUninstall: '确定卸载插件「{name}」吗？\n{detail}',
+    delPlugin: '将从 installed_plugins.json 移除该插件（缓存文件保留，可重新安装），重启 Claude Code 后生效。',
+    delInstalled: '这是工具安装的资源，只会移除软链接，源文件保留（可用安装工具恢复）。',
+    delSkillDir: '将删除整个技能目录，此操作不可撤销。', delPlain: '此操作不可撤销。',
+    scopeGlobal: '全局（~/.claude）',
+    stTotalSessions: '总会话', stTotalMessages: '总消息', stActiveDays: '活跃天数', stSince: '首次使用',
+    stDaily: '每日消息量', rg14: '近2周', rg42: '近6周', rg90: '近3月', rgAll: '全部', stModels: '模型 token 用量（输入 + 输出）', stHours: '活跃时段分布（24 小时）',
+    stTools: '工具调用', stOther: '其他',
+    stSource: '数据来源：~/.claude/projects 会话记录实时统计（与 ccusage 同源，已按 message.id + requestId 去重）',
+    stTable: '每日用量明细（ccusage daily）', thDate: '日期', thModels: '模型', totalRow: '合计',
+    stCostNote: '* 费用按官方定价估算（Opus $5/$25、Fable $10/$50、Haiku $1/$5、Sonnet $3/$15 每百万 token，含 5m/1h 缓存价差），已与 ccusage 逐日校验一致；带 * 的行含未知定价模型',
+    templates: {
+      commands: '在这里写命令的提示词。用户输入 /<名称> 时会执行这段指令。\n可用 $ARGUMENTS 引用用户传入的参数。\n',
+      skills: '---\nname: {NAME}\ndescription: "一句话描述这个 skill 何时使用"\n---\n\n# {NAME}\n\n技能的详细说明写在这里。\n',
+      agents: '---\nname: {NAME}\ndescription: 描述这个 agent 的用途与何时调用\ntools: Read, Grep, Bash\n---\n\n你是一个专门负责……的 agent。\n',
+      workflows: "export const meta = {\n  name: '{NAME}',\n  description: '一句话描述这个工作流',\n  phases: [{ title: 'Phase 1' }],\n}\n// 用 agent()/parallel()/pipeline()/phase()/log() 编排子代理\nphase('Phase 1')\nconst result = await agent('在这里写子代理的任务')\nreturn { result }\n",
+    },
+  },
+  en: {
+    tabs: { commands: '/ Commands', skills: 'Skills', agents: 'Agents', plugins: 'Plugins', config: 'Config', workflows: 'Workflows', sessions: 'Sessions', stats: 'Stats' },
+    typeLabel: { commands: 'command', skills: 'skill', agents: 'agent', plugins: 'plugin', config: 'config', workflows: 'workflow', sessions: 'session', stats: 'stats' },
+    search: 'Search name / description…', mineOnly: 'Mine', all: 'All',
+    newBtn: '＋ New', edit: 'Edit', save: 'Save', cancel: 'Cancel', del: 'Delete', uninstall: 'Uninstall', create: 'Create',
+    noSelection: 'Nothing selected', emptyHint: '← Pick an item on the left, or click "New"',
+    newTitle: 'New {label}', namePh: 'Name (e.g. my-command)', nameRequired: 'Please enter a name',
+    hintSkills: 'Will create ~/.claude/skills/<name>/SKILL.md', hintFlat: 'Will create ~/.claude/{type}/<name>.md',
+    hintWorkflows: 'Will create ~/.claude/workflows/<name>.js (invocable by name via the Workflow tool)',
+    saved: 'Saved ✓', deleted: 'Deleted', created: 'Created ✓',
+    loadFail: 'Load failed: ', saveFail: 'Save failed: ', delFail: 'Delete failed: ', createFail: 'Create failed: ',
+    unsaved: 'You have unsaved edits. Discard them?',
+    noteBuiltin: ' · built-in (read-only)', notePluginCmd: ' · provided by plugin (read-only)',
+    notePlugin: ' · installed plugin (delete = uninstall)', noteInstalled: ' · installed (symlink, read-only)',
+    tagBuiltin: 'built-in', tagInstalled: 'installed', tagPluginPrefix: 'plugin:',
+    confirmDel: 'Delete {label} "{name}"?\n{detail}',
+    confirmUninstall: 'Uninstall plugin "{name}"?\n{detail}',
+    delPlugin: 'Removes it from installed_plugins.json (cache kept, can reinstall). Takes effect after restarting Claude Code.',
+    delInstalled: 'This was installed by a tool; only the symlink is removed, the source files are kept.',
+    delSkillDir: 'The entire skill directory will be deleted. This cannot be undone.', delPlain: 'This cannot be undone.',
+    scopeGlobal: 'Global (~/.claude)',
+    stTotalSessions: 'Sessions', stTotalMessages: 'Messages', stActiveDays: 'Active days', stSince: 'First used',
+    stDaily: 'Daily messages', rg14: '2w', rg42: '6w', rg90: '3m', rgAll: 'All', stModels: 'Model token usage (input + output)', stHours: 'Hourly activity (24h)',
+    stTools: 'Tool calls', stOther: 'Other',
+    stSource: 'Source: computed live from ~/.claude/projects transcripts (same source as ccusage, deduplicated by message.id + requestId)',
+    stTable: 'Daily usage (ccusage daily)', thDate: 'Date', thModels: 'Models', totalRow: 'Total',
+    stCostNote: '* Cost estimated from official pricing (Opus $5/$25, Fable $10/$50, Haiku $1/$5, Sonnet $3/$15 per M tokens, incl. 5m/1h cache tiers), validated day-by-day against ccusage; rows marked * contain models with unknown pricing',
+    templates: {
+      commands: 'Write the prompt for this command here. It runs when you type /<name>.\nUse $ARGUMENTS to reference user-provided arguments.\n',
+      skills: '---\nname: {NAME}\ndescription: "One sentence describing when to use this skill"\n---\n\n# {NAME}\n\nDetailed skill instructions go here.\n',
+      agents: '---\nname: {NAME}\ndescription: What this agent does and when to invoke it\ntools: Read, Grep, Bash\n---\n\nYou are an agent responsible for ...\n',
+      workflows: "export const meta = {\n  name: '{NAME}',\n  description: 'One sentence describing this workflow',\n  phases: [{ title: 'Phase 1' }],\n}\n// Orchestrate subagents with agent()/parallel()/pipeline()/phase()/log()\nphase('Phase 1')\nconst result = await agent('Subagent task goes here')\nreturn { result }\n",
+    },
+  },
+  ja: {
+    tabs: { commands: '/ コマンド', skills: 'スキル', agents: 'エージェント', plugins: 'プラグイン', config: '設定', workflows: 'ワークフロー', sessions: 'セッション', stats: '統計' },
+    typeLabel: { commands: 'コマンド', skills: 'スキル', agents: 'エージェント', plugins: 'プラグイン', config: '設定', workflows: 'ワークフロー', sessions: 'セッション', stats: '統計' },
+    search: '名前 / 説明を検索…', mineOnly: '自作のみ', all: 'すべて',
+    newBtn: '＋ 新規', edit: '編集', save: '保存', cancel: 'キャンセル', del: '削除', uninstall: 'アンインストール', create: '作成',
+    noSelection: '未選択', emptyHint: '← 左からアイテムを選択、または「新規」をクリック',
+    newTitle: '新規{label}', namePh: '名前（例: my-command）', nameRequired: '名前を入力してください',
+    hintSkills: '~/.claude/skills/<名前>/SKILL.md を作成します', hintFlat: '~/.claude/{type}/<名前>.md を作成します',
+    hintWorkflows: '~/.claude/workflows/<名前>.js を作成します（Workflow ツールから名前で呼び出せます）',
+    saved: '保存しました ✓', deleted: '削除しました', created: '作成しました ✓',
+    loadFail: '読み込み失敗: ', saveFail: '保存失敗: ', delFail: '削除失敗: ', createFail: '作成失敗: ',
+    unsaved: '未保存の編集があります。破棄しますか？',
+    noteBuiltin: ' · 組み込みコマンド（読み取り専用）', notePluginCmd: ' · プラグイン提供（読み取り専用）',
+    notePlugin: ' · インストール済みプラグイン（削除 = アンインストール）', noteInstalled: ' · インストール済み（シンボリックリンク、読み取り専用）',
+    tagBuiltin: '組込', tagInstalled: '導入', tagPluginPrefix: 'プラグイン:',
+    confirmDel: '{label}「{name}」を削除しますか？\n{detail}',
+    confirmUninstall: 'プラグイン「{name}」をアンインストールしますか？\n{detail}',
+    delPlugin: 'installed_plugins.json から削除します（キャッシュは保持、再インストール可）。Claude Code の再起動後に反映されます。',
+    delInstalled: 'ツールでインストールされたリソースです。シンボリックリンクのみ削除され、元ファイルは保持されます。',
+    delSkillDir: 'スキルディレクトリ全体を削除します。元に戻せません。', delPlain: '元に戻せません。',
+    scopeGlobal: 'グローバル（~/.claude）',
+    stTotalSessions: '総セッション', stTotalMessages: '総メッセージ', stActiveDays: 'アクティブ日数', stSince: '初回利用',
+    stDaily: '日別メッセージ数', rg14: '2週', rg42: '6週', rg90: '3ヶ月', rgAll: 'すべて', stModels: 'モデル別トークン使用量（入力+出力）', stHours: '時間帯別アクティビティ（24h）',
+    stTools: 'ツール呼び出し', stOther: 'その他',
+    stSource: 'データソース：~/.claude/projects のトランスクリプトからリアルタイム集計（ccusage と同一ソース、message.id + requestId で重複排除済み）',
+    stTable: '日別使用量明細（ccusage daily）', thDate: '日付', thModels: 'モデル', totalRow: '合計',
+    stCostNote: '* 費用は公式価格から推定（Opus $5/$25、Fable $10/$50、Haiku $1/$5、Sonnet $3/$15 / 100万トークン、5m/1h キャッシュ価格差込み）。ccusage と日次で検証済み。* 付きの行は価格不明のモデルを含みます',
+    templates: {
+      commands: 'ここにコマンドのプロンプトを書きます。/<名前> と入力すると実行されます。\n$ARGUMENTS でユーザーの引数を参照できます。\n',
+      skills: '---\nname: {NAME}\ndescription: "このスキルをいつ使うかを一文で"\n---\n\n# {NAME}\n\nスキルの詳細な説明をここに書きます。\n',
+      agents: '---\nname: {NAME}\ndescription: このエージェントの用途と呼び出しタイミング\ntools: Read, Grep, Bash\n---\n\nあなたは……を担当するエージェントです。\n',
+      workflows: "export const meta = {\n  name: '{NAME}',\n  description: 'このワークフローの説明を一文で',\n  phases: [{ title: 'Phase 1' }],\n}\n// agent()/parallel()/pipeline()/phase()/log() でサブエージェントを編成\nphase('Phase 1')\nconst result = await agent('サブエージェントのタスクをここに')\nreturn { result }\n",
+    },
+  },
+};
+let lang = localStorage.getItem('panel-lang');
+if (!LANGS.some(l => l.code === lang)) lang = DEFAULT_LANG;
+// 取字符串：当前语言 → en → 默认语言，逐级回退（部分翻译的语言也能正常工作）
+const t = k => I18N[lang]?.[k] ?? I18N.en[k] ?? I18N[DEFAULT_LANG][k] ?? k;
+const fmt = (tpl, vars) => tpl.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '');
+// 各专区能力：new=可新建, edit=可编辑, del=可删除, filter=显示自建/全部筛选
+const CAPS = {
+  commands: { new: true,  edit: true,  del: true,  filter: true },
+  skills:   { new: true,  edit: true,  del: true,  filter: true },
+  agents:   { new: true,  edit: true,  del: true,  filter: true },
+  plugins:  { new: false, edit: false, del: true,  filter: false },
+  config:   { new: false, edit: true,  del: false, filter: false },
+  workflows: { new: true, edit: true, del: true, filter: false },
+  sessions: { new: false, edit: false, del: false, filter: false },
+  stats:    { new: false, edit: false, del: false, filter: false, dashboard: true },
+};
+// 支持项目作用域的专区
+const SCOPED = ['commands', 'skills', 'agents', 'workflows', 'config'];
+let state = { type: 'commands', items: [], current: null, editing: false, keyword: '', origin: 'user', scope: '', projects: [] };
+
+function matchOrigin(it, type) {
+  if (!CAPS[type || state.type].filter) return true;
+  return state.origin === 'all' || (it.origin || 'user') === 'user';
+}
+
+async function api(method, path, body) {
+  const q = 'lang=' + lang + (state.scope ? '&scope=' + encodeURIComponent(state.scope) : '');
+  const res = await fetch('/api/' + path + (path.includes('?') ? '&' : '?') + q, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+function toast(msg, ok = true) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.style.color = ok ? 'var(--green)' : 'var(--danger)';
+  t.style.display = 'block';
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.style.display = 'none', 2200);
+}
+
+async function loadCounts() {
+  for (const type of Object.keys(CAPS)) {
+    if (CAPS[type].dashboard) continue; // 统计页无列表计数
+    try {
+      const { items } = await api('GET', type);
+      if (!Array.isArray(items)) continue;
+      document.querySelector(`.tab[data-type="${type}"] .cnt`).textContent = items.filter(it => matchOrigin(it, type)).length;
+      if (type === state.type) { state.items = items; renderList(); }
+    } catch (e) {}
+  }
+}
+
+async function switchType(type) {
+  state.type = type; state.current = null; state.editing = false; state.keyword = '';
+  $('#search').value = '';
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.type === type));
+  $('#newbtn').style.display = CAPS[type].new ? 'block' : 'none';
+  $('#filterbar').style.display = CAPS[type].filter ? 'flex' : 'none';
+  $('#delBtn').textContent = type === 'plugins' ? t('uninstall') : t('del');
+  showEmpty();
+  if (CAPS[type].dashboard) { await renderStatsTab(); return; }
+  const { items } = await api('GET', type);
+  state.items = items;
+  document.querySelector(`.tab[data-type="${type}"] .cnt`).textContent = items.filter(it => matchOrigin(it, type)).length;
+  renderList();
+}
+
+function renderList() {
+  const kw = state.keyword.toLowerCase();
+  const list = $('#list');
+  list.innerHTML = '';
+  state.items
+    .filter(it => matchOrigin(it))
+    .filter(it => !kw || it.name.toLowerCase().includes(kw) || (it.description || '').toLowerCase().includes(kw))
+    .forEach(it => {
+      const key = it.key || it.name;
+      const div = document.createElement('div');
+      div.className = 'item' + (state.current === key ? ' active' : '');
+      const prefix = state.type === 'commands' ? '/' : '';
+      div.innerHTML = `<div class="nm"></div><div class="ds"></div>`;
+      div.querySelector('.nm').textContent = prefix + it.name;
+      if (state.origin === 'all' && it.origin === 'installed') {
+        const tag = document.createElement('span');
+        tag.className = 'tag installed';
+        const src = it.source || 'installed';
+        tag.textContent = src === 'builtin' ? t('tagBuiltin')
+          : src.startsWith('plugin:') ? t('tagPluginPrefix') + src.slice(7)
+          : t('tagInstalled');
+        div.querySelector('.nm').appendChild(tag);
+      }
+      div.querySelector('.ds').textContent = it.description || '';
+      div.onclick = () => openItem(key, it.name);
+      list.appendChild(div);
+    });
+}
+
+function showEmpty() {
+  $('#empty').style.display = 'block';
+  $('#render').innerHTML = '';
+  $('#render').classList.remove('wide');
+  $('#metabar').style.display = 'none';
+  $('#editor').style.display = 'none';
+  $('#title').firstChild.textContent = t('noSelection');
+  $('#fpath').textContent = '';
+  $('#editBtn').disabled = $('#delBtn').disabled = true;
+  setEditMode(false);
+}
+
+async function openItem(key, displayName) {
+  if (state.editing && !confirm(t('unsaved'))) return;
+  state.editing = false;
+  try {
+    const d = await api('GET', `${state.type}/${encodeURIComponent(key)}`);
+    state.current = key;
+    state.raw = d.content;
+    $('#empty').style.display = 'none';
+    $('#title').firstChild.textContent = (state.type === 'commands' ? '/' : '') + (displayName || d.name);
+    state.currentOrigin = d.origin || 'user';
+    const caps = CAPS[state.type];
+    const readonlyCmd = state.type === 'commands' && key.includes('!');  // 内置或插件提供的命令
+    const note = d.builtin ? t('noteBuiltin')
+      : readonlyCmd ? t('notePluginCmd')
+      : d.plugin ? t('notePlugin')
+      : d.origin === 'installed' ? t('noteInstalled') : '';
+    $('#fpath').textContent = d.path.replace(/^\/Users\/[^/]+/, '~') + note;
+    $('#editBtn').disabled = !caps.edit || d.origin === 'installed';
+    $('#delBtn').disabled = !caps.del || readonlyCmd;
+    setEditMode(false);
+    renderDoc(d);
+    renderList();
+  } catch (e) { toast(t('loadFail') + e.message, false); }
+}
+
+function renderDoc(d) {
+  const metabar = $('#metabar');
+  const keys = Object.keys(d.meta || {});
+  if (keys.length) {
+    metabar.style.display = 'flex';
+    metabar.innerHTML = '';
+    keys.forEach(k => {
+      const c = document.createElement('div');
+      c.className = 'chip';
+      const b = document.createElement('b'); b.textContent = k;
+      c.appendChild(b);
+      c.appendChild(document.createTextNode(d.meta[k]));
+      c.title = d.meta[k];
+      metabar.appendChild(c);
+    });
+  } else metabar.style.display = 'none';
+  if (d.lang === 'json' || d.lang === 'js') {
+    $('#render').innerHTML = `<pre><code>${esc(d.content)}</code></pre>`;
+    return;
+  }
+  const body = d.content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
+  $('#render').innerHTML = md(body);
+}
+
+function setEditMode(on) {
+  state.editing = on;
+  $('#editor').style.display = on ? 'block' : 'none';
+  $('#render').style.display = on ? 'none' : 'block';
+  $('#metabar').style.display = on ? 'none' : ($('#metabar').innerHTML ? 'flex' : 'none');
+  $('#editBtn').style.display = on ? 'none' : 'inline-block';
+  $('#saveBtn').style.display = on ? 'inline-block' : 'none';
+  $('#cancelBtn').style.display = on ? 'inline-block' : 'none';
+  if (on) { $('#editor').value = state.raw; $('#editor').focus(); }
+}
+
+// ---------- CRUD 操作 ----------
+$('#editBtn').onclick = () => setEditMode(true);
+$('#cancelBtn').onclick = () => { setEditMode(false); };
+$('#saveBtn').onclick = async () => {
+  try {
+    await api('PUT', `${state.type}/${encodeURIComponent(state.current)}`, { content: $('#editor').value });
+    state.raw = $('#editor').value;
+    toast('已保存 ✓');
+    setEditMode(false);
+    const d = await api('GET', `${state.type}/${encodeURIComponent(state.current)}`);
+    renderDoc(d);
+    loadCounts();
+  } catch (e) { toast(t('saveFail') + e.message, false); }
+};
+$('#delBtn').onclick = async () => {
+  const label = t('typeLabel')[state.type];
+  const detail = state.type === 'plugins' ? t('delPlugin')
+    : state.currentOrigin === 'installed' ? t('delInstalled')
+    : (state.type === 'skills' ? t('delSkillDir') : t('delPlain'));
+  const msg = state.type === 'plugins'
+    ? fmt(t('confirmUninstall'), { name: state.current, detail })
+    : fmt(t('confirmDel'), { label, name: state.current, detail });
+  if (!confirm(msg)) return;
+  try {
+    await api('DELETE', `${state.type}/${encodeURIComponent(state.current)}`);
+    toast(t('deleted'));
+    state.current = null;
+    showEmpty();
+    switchType(state.type);
+  } catch (e) { toast(t('delFail') + e.message, false); }
+};
+
+$('#newbtn').onclick = () => {
+  $('#modalTitle').textContent = fmt(t('newTitle'), { label: t('typeLabel')[state.type] });
+  $('#modalHint').textContent = state.type === 'skills' ? t('hintSkills')
+    : state.type === 'workflows' ? t('hintWorkflows')
+    : fmt(t('hintFlat'), { type: state.type });
+  $('#newName').value = '';
+  $('#modal').style.display = 'flex';
+  $('#newName').focus();
+};
+function closeModal() { $('#modal').style.display = 'none'; }
+async function createItem() {
+  const name = $('#newName').value.trim();
+  if (!name) return toast(t('nameRequired'), false);
+  try {
+    const content = t('templates')[state.type].replaceAll('{NAME}', name);
+    await api('POST', state.type, { name, content });
+    closeModal();
+    toast(t('created'));
+    await switchType(state.type);
+    openItem(name);
+    setTimeout(() => setEditMode(true), 100);
+  } catch (e) { toast(t('createFail') + e.message, false); }
+}
+$('#newName').addEventListener('keydown', e => { if (e.key === 'Enter') createItem(); });
+
+$('#search').addEventListener('input', e => { state.keyword = e.target.value; renderList(); });
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchType(t.dataset.type));
+document.querySelectorAll('.fbtn').forEach(b => b.onclick = () => {
+  state.origin = b.dataset.origin;
+  document.querySelectorAll('.fbtn').forEach(x => x.classList.toggle('active', x === b));
+  renderList();
+  loadCounts();
+});
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 's' && state.editing) { e.preventDefault(); $('#saveBtn').click(); }
+  if (e.key === 'Escape') closeModal();
+});
+
+// ---------- 悬浮提示（任何带 data-tip 的元素）----------
+const tipEl = $('#tip');
+$('#content').addEventListener('mouseover', e => {
+  const el = e.target.closest('[data-tip]');
+  if (el) { tipEl.textContent = el.dataset.tip; tipEl.style.display = 'block'; }
+  else tipEl.style.display = 'none';
+});
+$('#content').addEventListener('mousemove', e => {
+  if (tipEl.style.display !== 'block') return;
+  const x = Math.min(e.clientX + 14, window.innerWidth - tipEl.offsetWidth - 8);
+  const y = Math.min(e.clientY + 14, window.innerHeight - tipEl.offsetHeight - 8);
+  tipEl.style.left = x + 'px';
+  tipEl.style.top = y + 'px';
+});
+$('#content').addEventListener('mouseleave', () => { tipEl.style.display = 'none'; });
+
+// ---------- 轻量 Markdown 渲染 ----------
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function inline(s) {
+  return esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>')
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+function md(src) {
+  const lines = src.split(/\r?\n/);
+  let html = '', i = 0;
+  while (i < lines.length) {
+    const l = lines[i];
+    // 代码块
+    if (/^```/.test(l)) {
+      let buf = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
+      i++;
+      html += `<pre><code>${esc(buf.join('\n'))}</code></pre>`;
+      continue;
+    }
+    // 表格
+    if (l.includes('|') && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i+1])) {
+      const cells = r => r.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(c => c.trim());
+      let t = '<table><thead><tr>' + cells(l).map(c => `<th>${inline(c)}</th>`).join('') + '</tr></thead><tbody>';
+      i += 2;
+      while (i < lines.length && lines[i].includes('|')) {
+        t += '<tr>' + cells(lines[i]).map(c => `<td>${inline(c)}</td>`).join('') + '</tr>';
+        i++;
+      }
+      html += t + '</tbody></table>';
+      continue;
+    }
+    // 标题
+    const h = l.match(/^(#{1,6})\s+(.*)/);
+    if (h) { html += `<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`; i++; continue; }
+    // 分割线
+    if (/^\s*(-{3,}|\*{3,})\s*$/.test(l)) { html += '<hr>'; i++; continue; }
+    // 引用
+    if (/^\s*>/.test(l)) {
+      let buf = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) buf.push(lines[i++].replace(/^\s*>\s?/, ''));
+      html += `<blockquote>${md(buf.join('\n'))}</blockquote>`;
+      continue;
+    }
+    // 列表
+    if (/^\s*([-*+]|\d+\.)\s+/.test(l)) {
+      const ordered = /^\s*\d+\./.test(l);
+      let items = [];
+      while (i < lines.length && /^\s*([-*+]|\d+\.)\s+/.test(lines[i])) {
+        items.push(lines[i].replace(/^\s*([-*+]|\d+\.)\s+/, ''));
+        i++;
+      }
+      const tag = ordered ? 'ol' : 'ul';
+      html += `<${tag}>` + items.map(it => `<li>${inline(it)}</li>`).join('') + `</${tag}>`;
+      continue;
+    }
+    // 空行
+    if (!l.trim()) { i++; continue; }
+    // 段落
+    let buf = [l];
+    i++;
+    while (i < lines.length && lines[i].trim() && !/^(#|```|\s*([-*+]|\d+\.)\s|\s*>|\s*-{3,}\s*$)/.test(lines[i]) && !lines[i].includes('|')) {
+      buf.push(lines[i]); i++;
+    }
+    html += `<p>${inline(buf.join(' '))}</p>`;
+  }
+  return html;
+}
+
+// ---------- 项目作用域 ----------
+async function loadProjects() {
+  try {
+    const { items } = await api('GET', 'projects');
+    state.projects = items || [];
+  } catch (e) { state.projects = []; }
+  renderProjOptions();
+}
+function renderProjOptions() {
+  const sel = $('#projSel');
+  const cur = state.scope;
+  sel.innerHTML = '';
+  sel.add(new Option(t('scopeGlobal'), ''));
+  for (const p of state.projects) {
+    const o = new Option('📁 ' + p.name, p.path);
+    o.title = p.path;
+    sel.add(o);
+  }
+  sel.value = cur;
+}
+$('#projSel').onchange = async e => {
+  state.scope = e.target.value;
+  // 会话/统计/插件是全局数据；若当前在这些页则跳回命令页体现作用域
+  if (!SCOPED.includes(state.type) && state.scope) await switchType('commands');
+  else await switchType(state.type);
+  loadCounts();
+};
+
+// ---------- 统计仪表盘 ----------
+const fmtNum = n => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n ?? 0);
+const CHART_COLORS = ['#3987e5', '#199e70', '#c98500', '#9085e9', '#e66767', '#d55181', '#d95926', '#86b6ef'];
+
+let statsRange = 42; // 每日图展示的天数，0 = 全部
+
+async function renderStatsTab() {
+  try {
+    state.statsData = await api('GET', 'stats');
+    $('#empty').style.display = 'none';
+    $('#title').firstChild.textContent = t('tabs')['stats'];
+    $('#fpath').textContent = '~/.claude/projects';
+    $('#render').style.display = 'block';
+    $('#render').classList.add('wide');
+    renderStatsNow();
+  } catch (e) { toast(t('loadFail') + e.message, false); }
+}
+
+function renderStatsNow() {
+  $('#render').innerHTML = statsHTML(state.statsData);
+  // 时间范围按钮（重渲染不重新请求，数据已在内存）
+  $('#render').querySelectorAll('.rangebtn').forEach(b => {
+    b.onclick = () => { statsRange = +b.dataset.range; renderStatsNow(); };
+  });
+}
+
+function statsHTML(d) {
+  let h = '';
+  // 概览卡片
+  const days = d.dailyActivity || [];
+  const cards = [
+    [fmtNum(d.totalSessions), t('stTotalSessions')],
+    [fmtNum(d.totalMessages), t('stTotalMessages')],
+    [String(days.length), t('stActiveDays')],
+    [(d.firstSessionDate || '').slice(0, 10) || '—', t('stSince')],
+  ];
+  h += '<div class="cards">' + cards.map(([v, k]) => `<div class="card"><div class="v">${esc(v)}</div><div class="k">${esc(k)}</div></div>`).join('') + '</div>';
+  if (d.source === 'transcripts') h += `<div style="font-size:11.5px;color:var(--muted);margin:-8px 0 16px">${esc(t('stSource'))}</div>`;
+
+  // 每日消息量，单一系列：单色 + 峰值直接标注 + 悬浮提示 + 时间范围切换
+  const recent = statsRange ? days.slice(-statsRange) : days;
+  if (recent.length) {
+    const max = Math.max(...recent.map(x => x.messageCount), 1);
+    const maxIdx = recent.findIndex(x => x.messageCount === max);
+    const ranges = [[14, t('rg14')], [42, t('rg42')], [90, t('rg90')], [0, t('rgAll')]];
+    h += `<div class="chart"><div class="chartHead"><h3>${esc(t('stDaily'))}</h3><div class="range">`
+      + ranges.map(([v, lbl]) => `<button class="rangebtn${v === statsRange ? ' active' : ''}" data-range="${v}">${esc(lbl)}</button>`).join('')
+      + `</div></div><div class="bars">`;
+    recent.forEach((x, i) => {
+      const pct = Math.max(2, Math.round(x.messageCount / max * 100));
+      const tip = `${x.date} · ${x.messageCount.toLocaleString()} msg`;
+      h += `<div class="b" style="height:${pct}%" data-tip="${esc(tip)}">${i === maxIdx ? `<span class="lbl">${fmtNum(max)}</span>` : ''}</div>`;
+    });
+    h += `</div><div class="axis"><span>${esc(recent[0].date)}</span><span>${esc(recent[recent.length - 1].date)}</span></div></div>`;
+  }
+
+  // 模型 token 用量（类别 = 身份，固定顺序取色，名称直接标注）
+  const models = Object.entries(d.modelUsage || {})
+    .map(([m, u]) => ({ m, v: (u.inputTokens || 0) + (u.outputTokens || 0) }))
+    .filter(x => x.v > 0)
+    .sort((a, b) => b.v - a.v);
+  if (models.length) {
+    const shown = models.slice(0, 7);
+    const rest = models.slice(7).reduce((s, x) => s + x.v, 0);
+    if (rest > 0) shown.push({ m: t('stOther'), v: rest });
+    const maxV = shown[0].v;
+    h += `<div class="chart"><h3>${esc(t('stModels'))}</h3>`;
+    shown.forEach((x, i) => {
+      const pct = Math.max(1, Math.round(x.v / maxV * 100));
+      const u = (d.modelUsage || {})[x.m];
+      const tip = u ? `${x.m} · in ${u.inputTokens.toLocaleString()} · out ${u.outputTokens.toLocaleString()} · cache-r ${fmtNum(u.cacheReadInputTokens)} · cache-w ${fmtNum(u.cacheCreationInputTokens)}` : x.m + ' · ' + x.v.toLocaleString();
+      h += `<div class="hbar-row" data-tip="${esc(tip)}">
+        <div class="hbar-name">${esc(x.m)}</div>
+        <div class="hbar-track"><div class="hbar-fill" style="width:${pct}%;background:${CHART_COLORS[i % CHART_COLORS.length]}"></div></div>
+        <div class="hbar-val">${fmtNum(x.v)}</div></div>`;
+    });
+    h += '</div>';
+  }
+
+  // 24 小时活跃分布，单一系列
+  const hours = Array.from({ length: 24 }, (_, i) => d.hourCounts?.[String(i)] || 0);
+  const hmax = Math.max(...hours, 1);
+  const hmaxIdx = hours.indexOf(hmax);
+  h += `<div class="chart"><h3>${esc(t('stHours'))}</h3><div class="bars" style="height:80px">`;
+  hours.forEach((v, i) => {
+    const pct = Math.max(2, Math.round(v / hmax * 100));
+    h += `<div class="b" style="height:${pct}%" data-tip="${i}:00 – ${i + 1}:00 · ${v.toLocaleString()}">${i === hmaxIdx ? `<span class="lbl">${fmtNum(hmax)}</span>` : ''}</div>`;
+  });
+  h += `</div><div class="axis"><span>0:00</span><span>12:00</span><span>23:00</span></div></div>`;
+
+  // ccusage daily 风格的逐日明细表
+  const rows = d.dailyTable || [];
+  if (rows.length) {
+    const num = n => `<td class="num">${n.toLocaleString()}</td>`;
+    h += `<div class="chart"><h3>${esc(t('stTable'))}</h3><div style="overflow-x:auto"><table class="usage">`;
+    h += `<thead><tr><th>${esc(t('thDate'))}</th><th>${esc(t('thModels'))}</th><th class="num">Input</th><th class="num">Output</th><th class="num">Cache Create</th><th class="num">Cache Read</th><th class="num">Total Tokens</th><th class="num">Cost (USD)</th></tr></thead><tbody>`;
+    for (const r of rows) {
+      h += `<tr><td>${esc(r.date)}</td><td>${r.models.map(m => '- ' + esc(m)).join('<br>')}</td>`
+        + num(r.input) + num(r.output) + num(r.cacheCreate) + num(r.cacheRead) + num(r.totalTokens)
+        + `<td class="num">$${r.cost.toFixed(2)}${r.costKnown ? '' : ' *'}</td></tr>`;
+    }
+    const tt = d.totals || {};
+    h += `<tr class="total"><td>${esc(t('totalRow'))}</td><td></td>`
+      + num(tt.input || 0) + num(tt.output || 0) + num(tt.cacheCreate || 0) + num(tt.cacheRead || 0) + num(tt.totalTokens || 0)
+      + `<td class="num">$${(tt.cost || 0).toFixed(2)}${tt.costKnown ? '' : ' *'}</td></tr>`;
+    h += `</tbody></table></div><div style="font-size:11.5px;color:var(--muted);margin-top:10px">${esc(t('stCostNote'))}</div></div>`;
+  }
+  return h;
+}
+
+// ---------- 语言切换 ----------
+function applyLang() {
+  document.documentElement.lang = lang;
+  const sel = $('#langSel');
+  if (!sel.options.length) LANGS.forEach(l => sel.add(new Option(l.label, l.code)));
+  sel.value = lang;
+  document.querySelectorAll('.tab').forEach(tb => { tb.firstChild.textContent = t('tabs')[tb.dataset.type]; });
+  $('#search').placeholder = t('search');
+  document.querySelector('.fbtn[data-origin="user"]').textContent = t('mineOnly');
+  document.querySelector('.fbtn[data-origin="all"]').textContent = t('all');
+  $('#newbtn').textContent = t('newBtn');
+  $('#editBtn').textContent = t('edit');
+  $('#saveBtn').textContent = t('save');
+  $('#cancelBtn').textContent = t('cancel');
+  $('#delBtn').textContent = state.type === 'plugins' ? t('uninstall') : t('del');
+  $('#empty').textContent = t('emptyHint');
+  $('#newName').placeholder = t('namePh');
+  $('#modalCancel').textContent = t('cancel');
+  $('#modalCreate').textContent = t('create');
+  renderProjOptions();
+  if (!state.current) $('#title').firstChild.textContent = t('noSelection');
+}
+
+async function setLang(code) {
+  if (!LANGS.some(l => l.code === code)) return;
+  lang = code;
+  localStorage.setItem('panel-lang', lang);
+  applyLang();
+  // 重新拉取本地化的列表与详情
+  if (CAPS[state.type].dashboard) { await renderStatsTab(); loadCounts(); return; }
+  const cur = state.current;
+  const { items } = await api('GET', state.type);
+  state.items = items;
+  renderList();
+  loadCounts();
+  if (cur && !state.editing) openItem(cur);
+}
+$('#langSel').onchange = e => setLang(e.target.value);
+
+// ---------- 初始化 ----------
+applyLang();
+switchType('commands');
+loadCounts();
+loadProjects();
+</script>
+</body>
+</html>
