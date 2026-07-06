@@ -1,13 +1,36 @@
 {
-  "name": "claude-panel",
+  "name": "claude-code-panel",
   "version": "0.1.0",
   "description": "Zero-dependency local dashboard for Claude Code: commands, skills, agents, plugins, workflows, sessions and a ccusage-accurate token usage dashboard",
   "main": "server.js",
-  "bin": { "claude-panel": "./server.js" },
-  "scripts": { "start": "node server.js" },
-  "engines": { "node": ">=18" },
-  "keywords": ["claude", "claude-code", "dashboard", "panel", "ccusage", "token-usage", "skills", "slash-commands"],
+  "bin": {
+    "claude-code-panel": "./server.js"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "dashboard",
+    "panel",
+    "ccusage",
+    "token-usage",
+    "skills",
+    "slash-commands"
+  ],
   "author": "13days",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/13days/claude-panel.git" }
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/13days/claude-panel.git"
+  },
+  "files": [
+    "server.js",
+    "index.html",
+    "scripts/gen-demo-data.py"
+  ]
 }

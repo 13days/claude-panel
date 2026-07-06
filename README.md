@@ -1,12 +1,18 @@
 # ⌘ Claude Panel
 
-**A beautiful, zero-dependency local dashboard for everything in your `~/.claude`** — slash commands, skills, agents, plugins, workflows, sessions, config files, and a real-time token usage dashboard that matches `ccusage` to the cent.
+**You've spent hundreds of dollars on Claude Code. Do you know where it went?**
+
+A beautiful, zero-dependency local dashboard for everything in your `~/.claude` — slash commands, skills, agents, plugins, workflows, sessions, config files, and a real-time token usage dashboard that matches `ccusage` to the cent.
+
+```bash
+npx claude-code-panel
+```
 
 [中文文档](README.zh-CN.md) · [Quick Start](#quick-start) · [Features](#features) · [Screenshots](#screenshots)
 
 ![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen) ![node >= 18](https://img.shields.io/badge/node-%3E%3D18-blue) ![license MIT](https://img.shields.io/badge/license-MIT-orange) ![i18n](https://img.shields.io/badge/i18n-中文%20%7C%20EN%20%7C%20日本語-purple)
 
-![demo](docs/demo.gif)
+![demo](https://raw.githubusercontent.com/13days/claude-panel/main/docs/demo.gif)
 
 ## Why
 
@@ -39,13 +45,19 @@ Plus the cross-cutting stuff:
 
 ## Quick Start
 
-Requires Node.js ≥ 18. No `npm install`.
+Requires Node.js ≥ 18.
+
+```bash
+npx claude-code-panel
+# open http://localhost:4321
+```
+
+Or from source (no `npm install` needed — there are zero dependencies):
 
 ```bash
 git clone https://github.com/13days/claude-panel.git
 cd claude-panel
 node server.js
-# open http://localhost:4321
 ```
 
 Environment variables:
@@ -71,43 +83,43 @@ CLAUDE_DIR="$PWD/demo-data/claude" PORT=4999 node server.js
 
 Daily message volume with hover tooltips and time-range switching, per-model token usage, 24h activity distribution:
 
-![stats dashboard](docs/01-stats-dashboard.png)
+![stats dashboard](https://raw.githubusercontent.com/13days/claude-panel/main/docs/01-stats-dashboard.png)
 
 …and a `ccusage daily`-compatible cost table, priced per model with 5m/1h cache-tier awareness:
 
-![hover tooltip](docs/02-stats-hover.png)
+![hover tooltip](https://raw.githubusercontent.com/13days/claude-panel/main/docs/02-stats-hover.png)
 
 ### Every slash command in one place
 
 Yours, your plugins', and Claude Code's 34 built-ins — with source tags:
 
-![commands](docs/03-commands.png)
+![commands](https://raw.githubusercontent.com/13days/claude-panel/main/docs/03-commands.png)
 
 ### Skills, rendered properly
 
 Frontmatter as chips, Markdown with tables and code blocks; installed skills flagged and read-only:
 
-![skill detail](docs/04-skill-detail.png)
+![skill detail](https://raw.githubusercontent.com/13days/claude-panel/main/docs/04-skill-detail.png)
 
 ### Edit in place
 
 `⌘S` to save. JSON config files are validated before writing:
 
-![edit mode](docs/05-edit-mode.png)
+![edit mode](https://raw.githubusercontent.com/13days/claude-panel/main/docs/05-edit-mode.png)
 
 ### Workflows, plugins, sessions
 
-![workflows](docs/06-workflows.png)
+![workflows](https://raw.githubusercontent.com/13days/claude-panel/main/docs/06-workflows.png)
 
-![plugins](docs/07-plugins.png)
+![plugins](https://raw.githubusercontent.com/13days/claude-panel/main/docs/07-plugins.png)
 
 Find that session from last week and resume it in one paste:
 
-![sessions](docs/08-sessions.png)
+![sessions](https://raw.githubusercontent.com/13days/claude-panel/main/docs/08-sessions.png)
 
 ### Speaks your language
 
-![english ui](docs/09-english-ui.png)
+![english ui](https://raw.githubusercontent.com/13days/claude-panel/main/docs/09-english-ui.png)
 
 ## How it works
 
