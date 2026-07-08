@@ -66,6 +66,7 @@
   .tag { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 10px; margin-left: 6px; vertical-align: 2px; border: 1px solid var(--border); color: var(--muted); }
   .tag.installed { border-color: #4a72b5; color: #7fa3d9; }
   .tag.user { border-color: var(--green); color: var(--green); }
+  .tag.uses { border-color: rgba(217,123,79,.5); color: var(--accent2); }
   #list { flex: 1; overflow-y: auto; padding: 0 8px 8px; }
   .item { padding: 9px 10px; border-radius: 8px; cursor: pointer; margin-bottom: 2px; }
   .item:hover { background: var(--panel2); }
@@ -223,6 +224,8 @@ const I18N = {
     stTotalSessions: '总会话', stTotalMessages: '总消息', stActiveDays: '活跃天数', stSince: '首次使用',
     stDaily: '每日消息量', rg14: '近2周', rg42: '近6周', rg90: '近3月', rgAll: '全部', stModels: '模型 token 用量（输入 + 输出）', stHours: '活跃时段分布（24 小时）',
     stTools: '工具调用', stOther: '其他',
+    usesTip: '使用次数（命令来自输入历史；技能/智能体来自近 30 天会话记录）',
+    stTopCommands: '命令使用排行 Top 10（全部历史）', stTopSkills: '技能 / 智能体 / 工作流调用排行（近 30 天）',
     stSource: '数据来源：~/.claude/projects 会话记录实时统计（与 ccusage 同源，已按 message.id + requestId 去重）',
     stTable: '每日用量明细（ccusage daily）', thDate: '日期', thModels: '模型', totalRow: '合计',
     stCostNote: '* 费用按官方定价估算（Opus $5/$25、Fable $10/$50、Haiku $1/$5、Sonnet $3/$15 每百万 token，含 5m/1h 缓存价差），已与 ccusage 逐日校验一致；带 * 的行含未知定价模型',
@@ -257,6 +260,8 @@ const I18N = {
     stTotalSessions: 'Sessions', stTotalMessages: 'Messages', stActiveDays: 'Active days', stSince: 'First used',
     stDaily: 'Daily messages', rg14: '2w', rg42: '6w', rg90: '3m', rgAll: 'All', stModels: 'Model token usage (input + output)', stHours: 'Hourly activity (24h)',
     stTools: 'Tool calls', stOther: 'Other',
+    usesTip: 'Usage count (commands from input history; skills/agents from ~30 days of transcripts)',
+    stTopCommands: 'Top 10 commands (all history)', stTopSkills: 'Skill / agent / workflow invocations (last ~30 days)',
     stSource: 'Source: computed live from ~/.claude/projects transcripts (same source as ccusage, deduplicated by message.id + requestId)',
     stTable: 'Daily usage (ccusage daily)', thDate: 'Date', thModels: 'Models', totalRow: 'Total',
     stCostNote: '* Cost estimated from official pricing (Opus $5/$25, Fable $10/$50, Haiku $1/$5, Sonnet $3/$15 per M tokens, incl. 5m/1h cache tiers), validated day-by-day against ccusage; rows marked * contain models with unknown pricing',
@@ -291,6 +296,8 @@ const I18N = {
     stTotalSessions: '総セッション', stTotalMessages: '総メッセージ', stActiveDays: 'アクティブ日数', stSince: '初回利用',
     stDaily: '日別メッセージ数', rg14: '2週', rg42: '6週', rg90: '3ヶ月', rgAll: 'すべて', stModels: 'モデル別トークン使用量（入力+出力）', stHours: '時間帯別アクティビティ（24h）',
     stTools: 'ツール呼び出し', stOther: 'その他',
+    usesTip: '使用回数（コマンドは入力履歴、スキル/エージェントは直近30日のトランスクリプトから）',
+    stTopCommands: 'コマンド使用ランキング Top 10（全履歴）', stTopSkills: 'スキル／エージェント／ワークフロー呼び出しランキング（直近30日）',
     stSource: 'データソース：~/.claude/projects のトランスクリプトからリアルタイム集計（ccusage と同一ソース、message.id + requestId で重複排除済み）',
     stTable: '日別使用量明細（ccusage daily）', thDate: '日付', thModels: 'モデル', totalRow: '合計',
     stCostNote: '* 費用は公式価格から推定（Opus $5/$25、Fable $10/$50、Haiku $1/$5、Sonnet $3/$15 / 100万トークン、5m/1h キャッシュ価格差込み）。ccusage と日次で検証済み。* 付きの行は価格不明のモデルを含みます',
@@ -397,6 +404,13 @@ function renderList() {
           : src.startsWith('plugin:') ? t('tagPluginPrefix') + src.slice(7)
           : t('tagInstalled');
         div.querySelector('.nm').appendChild(tag);
+      }
+      if (it.uses > 0) {
+        const utag = document.createElement('span');
+        utag.className = 'tag uses';
+        utag.textContent = '×' + it.uses;
+        utag.title = t('usesTip');
+        div.querySelector('.nm').appendChild(utag);
       }
       div.querySelector('.ds').textContent = it.description || '';
       div.onclick = () => openItem(key, it.name);
@@ -750,6 +764,30 @@ function statsHTML(d) {
     h += `<div class="b" style="height:${pct}%" data-tip="${i}:00 – ${i + 1}:00 · ${v.toLocaleString()}">${i === hmaxIdx ? `<span class="lbl">${fmtNum(hmax)}</span>` : ''}</div>`;
   });
   h += `</div><div class="axis"><span>0:00</span><span>12:00</span><span>23:00</span></div></div>`;
+
+  // 使用排行：命令（来自 history，长期）+ 技能/智能体/工作流（来自 transcripts，约 30 天）
+  const usage = d.usage || {};
+  const rankChart = (title, entries) => {
+    if (!entries.length) return '';
+    const maxV = entries[0][1];
+    let c = `<div class="chart"><h3>${esc(title)}</h3>`;
+    entries.forEach(([name, v], i) => {
+      const pct = Math.max(1, Math.round(v / maxV * 100));
+      c += `<div class="hbar-row" data-tip="${esc(name + ' · ' + v.toLocaleString())}">
+        <div class="hbar-name">${esc(name)}</div>
+        <div class="hbar-track"><div class="hbar-fill" style="width:${pct}%;background:${CHART_COLORS[i % CHART_COLORS.length]}"></div></div>
+        <div class="hbar-val">${v.toLocaleString()}</div></div>`;
+    });
+    return c + '</div>';
+  };
+  const top = obj => Object.entries(obj || {}).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  h += rankChart(t('stTopCommands'), top(usage.commands).map(([n, v]) => ['/' + n, v]));
+  const mixed = [
+    ...top(usage.skills).map(([n, v]) => [n + ' · ' + t('typeLabel')['skills'], v]),
+    ...top(usage.agents).map(([n, v]) => [n + ' · ' + t('typeLabel')['agents'], v]),
+    ...top(usage.workflows).map(([n, v]) => [n + ' · ' + t('typeLabel')['workflows'], v]),
+  ].sort((a, b) => b[1] - a[1]).slice(0, 10);
+  h += rankChart(t('stTopSkills'), mixed);
 
   // ccusage daily 风格的逐日明细表
   const rows = d.dailyTable || [];

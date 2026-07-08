@@ -383,7 +383,7 @@ function localDay(ts) {
 }
 
 function parseTranscript(fp) {
-  const out = { records: [], userMsgs: 0, userByDay: {}, hourCounts: {}, firstTs: null };
+  const out = { records: [], userMsgs: 0, userByDay: {}, hourCounts: {}, firstTs: null, toolUses: [] };
   let content;
   try { content = fs.readFileSync(fp, 'utf8'); } catch { return out; }
   for (const line of content.split('\n')) {
@@ -406,7 +406,19 @@ function parseTranscript(fp) {
     let d;
     try { d = JSON.parse(line); } catch { continue; }
     const m = d.message;
-    if (!m || !m.usage || !m.model || m.model === '<synthetic>') continue;
+    if (!m) continue;
+    // 工具调用 → 技能/智能体/工作流使用统计（tool_use.id 用于去重流式重复行）
+    if (Array.isArray(m.content)) {
+      for (const b of m.content) {
+        if (!b || b.type !== 'tool_use' || !b.id || !b.input) continue;
+        let kind = null, name = null;
+        if (b.name === 'Skill') { kind = 'skills'; name = b.input.skill; }
+        else if (b.name === 'Task' || b.name === 'Agent') { kind = 'agents'; name = b.input.subagent_type; }
+        else if (b.name === 'Workflow') { kind = 'workflows'; name = b.input.name; }
+        if (kind && typeof name === 'string' && name) out.toolUses.push({ id: b.id, kind, name });
+      }
+    }
+    if (!m.usage || !m.model || m.model === '<synthetic>') continue;
     const u = m.usage;
     // 缓存写分 5 分钟 / 1 小时两档（1 小时价格是 2 倍），算费用时要区分
     const c1 = (u.cache_creation && u.cache_creation.ephemeral_1h_input_tokens) || 0;
@@ -451,12 +463,12 @@ function costOf(model, v) {
 }
 const shortModel = m => m.replace(/^claude-/, '').replace(/-\d{8}$/, '');
 
-function readStats() {
+// 递归收集全部 .jsonl（会话目录下还有 subagent 子目录，ccusage 也会统计它们）
+function transcriptFiles() {
   const projRoot = path.join(CLAUDE_DIR, 'projects');
-  if (!fs.existsSync(projRoot)) return null;
-  // 递归收集全部 .jsonl（会话目录下还有 subagent 子目录，ccusage 也会统计它们）
   const files = [];
   const sessionFiles = new Set(); // 仅顶层会话文件用于会话计数
+  if (!fs.existsSync(projRoot)) return { files, sessionFiles };
   (function walk(dir, depth) {
     let entries;
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
@@ -469,18 +481,56 @@ function readStats() {
       }
     }
   })(projRoot, 0);
+  return { files, sessionFiles };
+}
+
+// 带 mtime 缓存的单文件解析
+function parsedFor(fp) {
+  let st;
+  try { st = fs.statSync(fp); } catch { return null; }
+  let entry = _usageCache.get(fp);
+  if (!entry || entry.mtimeMs !== st.mtimeMs || entry.size !== st.size) {
+    entry = { mtimeMs: st.mtimeMs, size: st.size, parsed: parseTranscript(fp) };
+    _usageCache.set(fp, entry);
+  }
+  return entry.parsed;
+}
+
+// 使用次数统计：命令来自 history.jsonl（长期），技能/智能体/工作流来自 transcripts 的工具调用（约 30 天）
+function usageCounts() {
+  const counts = { commands: {}, skills: {}, agents: {}, workflows: {} };
+  for (const e of readHistory()) {
+    const disp = e.display || '';
+    if (!disp.startsWith('/') || disp.length < 2) continue;
+    const name = disp.slice(1).split(/\s/)[0];
+    if (!/^[\w:-]+$/.test(name)) continue;
+    counts.commands[name] = (counts.commands[name] || 0) + 1;
+  }
+  const seen = new Set();
+  for (const fp of transcriptFiles().files) {
+    const p = parsedFor(fp);
+    if (!p || !p.toolUses) continue;
+    for (const tu of p.toolUses) {
+      if (seen.has(tu.id)) continue; // 跨文件去重（resume 会复制历史）
+      seen.add(tu.id);
+      // 插件命名空间 plugin:skill 归到技能短名
+      const short = tu.name.includes(':') ? tu.name.split(':').pop() : tu.name;
+      counts[tu.kind][short] = (counts[tu.kind][short] || 0) + 1;
+    }
+  }
+  return counts;
+}
+
+function readStats() {
+  const projRoot = path.join(CLAUDE_DIR, 'projects');
+  if (!fs.existsSync(projRoot)) return null;
+  const { files, sessionFiles } = transcriptFiles();
   const seen = new Set();
   const modelUsage = {}, byDay = {}, hourCounts = {}, dayModels = {};
   let totalMessages = 0, firstTs = null;
   for (const fp of files) {
-    let st;
-    try { st = fs.statSync(fp); } catch { continue; }
-    let entry = _usageCache.get(fp);
-    if (!entry || entry.mtimeMs !== st.mtimeMs || entry.size !== st.size) {
-      entry = { mtimeMs: st.mtimeMs, size: st.size, parsed: parseTranscript(fp) };
-      _usageCache.set(fp, entry);
-    }
-    const p = entry.parsed;
+    const p = parsedFor(fp);
+    if (!p) continue;
     totalMessages += p.userMsgs;
     if (p.firstTs && (!firstTs || p.firstTs < firstTs)) firstTs = p.firstTs;
     for (const [h, n] of Object.entries(p.hourCounts)) hourCounts[h] = (hourCounts[h] || 0) + n;
@@ -526,7 +576,8 @@ function readStats() {
   return {
     totalSessions: sessionFiles.size, totalMessages,
     firstSessionDate: firstTs, dailyActivity,
-    modelUsage, hourCounts, dailyTable, totals, source: 'transcripts',
+    modelUsage, hourCounts, dailyTable, totals,
+    usage: usageCounts(), source: 'transcripts',
   };
 }
 
@@ -730,6 +781,11 @@ const server = http.createServer(async (req, res) => {
       return s ? sendJSON(res, 200, s) : sendJSON(res, 404, { error: T(lang, 'errNotFound') });
     }
 
+    // ---- 使用次数 ----
+    if (type === 'usage' && req.method === 'GET') {
+      return sendJSON(res, 200, usageCounts());
+    }
+
     // ---- 会话历史 ----
     if (type === 'sessions') {
       if (req.method === 'GET' && parts.length === 2) {
@@ -803,6 +859,9 @@ const server = http.createServer(async (req, res) => {
       if (type === 'commands' && !scope) {  // 项目作用域下只显示项目自己的命令
         items = items.concat(listPluginCommands(), builtinCommands(lang));
       }
+      // 合并使用次数（全局作用域下才有意义）
+      const uc = !scope ? usageCounts()[type] : null;
+      if (uc) items = items.map(it => ({ ...it, uses: uc[it.name] || 0 }));
       return sendJSON(res, 200, { items });
     }
 
