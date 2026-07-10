@@ -104,7 +104,11 @@ function installProxy() {
   console.log(done.join('\n'));
   console.log(`\n   \`claude\` now routes through http://127.0.0.1:${PROXY_PORT} whenever the panel is running,`);
   console.log(`   and connects directly when it's off — no breakage either way.`);
-  console.log(`\n   Open a new terminal (or source your rc) and just run:  claude`);
+  const primary = files.find(f => f.endsWith('.zshrc')) || files.find(f => f.endsWith('.bashrc')) || files[0];
+  console.log(`\n   ⚠ 已开着的终端不会自动生效（外部进程无法改你当前 shell）。二选一：`);
+  console.log(`     · 开一个新终端窗口，或`);
+  console.log(`     · 在要用 claude 的终端里执行:  source ${primary}`);
+  console.log(`   然后 \`type claude\` 显示 "shell function" 即已生效。`);
 }
 
 function uninstallProxy() {
@@ -135,7 +139,7 @@ function ensureProxyInstalled() {
   if (isProxyHookInstalled()) return;
   console.log('⚙️  首次启动：正在把 `claude` 接入 Inspector 代理（面板开着才走代理，关了自动直连）…');
   try { installProxy(); } catch (e) { console.log('   （自动接入失败，可手动运行 install-proxy：' + e.message + '）'); }
-  console.log('   不想自动接入？设 CCP_NO_PROXY_SETUP=1 启动，或运行 uninstall-proxy 移除。\n');
+  console.log('   不想自动接入？设 CCP_NO_PROXY_SETUP=1 启动，或运行 uninstall-proxy 移除。');
 }
 
 const CLI_CMD = process.argv[2];
@@ -1327,6 +1331,26 @@ function decodeBody(buf, encoding) {
   return buf;
 }
 
+// 把一条请求消息压成可读结构：区分文本 / 工具调用 / 工具返回 / 图片
+function summarizeMessage(m) {
+  const parts = [];
+  const c = m.content;
+  if (typeof c === 'string') parts.push({ kind: 'text', text: c.slice(0, 8000) });
+  else if (Array.isArray(c)) {
+    for (const b of c) {
+      if (!b || typeof b !== 'object') continue;
+      if (b.type === 'text') parts.push({ kind: 'text', text: (b.text || '').slice(0, 8000) });
+      else if (b.type === 'tool_use') parts.push({ kind: 'tool_use', name: b.name, input: JSON.stringify(b.input || {}, null, 2).slice(0, 6000) });
+      else if (b.type === 'tool_result') {
+        const rc = b.content;
+        const text = typeof rc === 'string' ? rc : Array.isArray(rc) ? rc.map(x => (x && x.type === 'text') ? x.text : (x && x.type === 'image' ? '[image]' : '')).join('\n') : JSON.stringify(rc || '');
+        parts.push({ kind: 'tool_result', text: (b.is_error ? '⚠ ' : '') + text.slice(0, 8000) });
+      } else if (b.type === 'image') parts.push({ kind: 'image', text: '[image]' });
+    }
+  }
+  return { role: m.role, parts };
+}
+
 function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream, reqHeaders, resEncoding) {
   resBody = decodeBody(resBody, resEncoding);
   const ua = (reqHeaders && (reqHeaders['user-agent'] || reqHeaders['User-Agent'])) || '';
@@ -1351,6 +1375,8 @@ function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream,
       : [];
     const lastU = (b.messages || []).filter(m => m.role === 'user').pop();
     if (lastU) rec.lastUser = extractText(lastU.content).slice(0, 500);
+    // 完整上下文：这一轮真正发给大模型的全部消息（文本 + 工具调用 + 工具返回），供仔细分析
+    rec.messages = Array.isArray(b.messages) ? b.messages.slice(-120).map(summarizeMessage) : [];
   } catch {}
   try {
     const rtext = resBody.toString('utf8');
