@@ -1749,6 +1749,15 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+server.on('error', e => {
+  if (e.code === 'EADDRINUSE') {
+    console.error(`\n⚠ 端口 ${PORT} 已被占用——面板可能已经在运行了：http://localhost:${PORT}`);
+    console.error(`  直接在浏览器打开即可；或换端口启动：  PORT=其它端口 npx claude-code-panel\n`);
+  } else {
+    console.error(`启动失败：${e.message}`);
+  }
+  process.exit(1); // 干净退出，不抛未捕获堆栈
+});
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`Claude Panel 已启动: http://localhost:${PORT}`);
   console.log(`管理目录: ${CLAUDE_DIR}`);
