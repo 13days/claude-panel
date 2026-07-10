@@ -16,6 +16,120 @@ const os = require('os');
 
 const PORT = process.env.PORT || 4321;
 const PROXY_PORT = process.env.PROXY_PORT || Number(PORT) + 1;
+
+// ---------- CLI 子命令：把 Inspector 代理装进 shell ----------
+// 写入一个 claude() 包装函数：调用时探测代理端口，通了才走代理、不通就直连，
+// 保证面板没开时 Claude Code 照常工作（不会因指向死端口而失败）。
+const RC_START = '# >>> claude-code-panel >>>';
+const RC_END = '# <<< claude-code-panel <<<';
+
+// 覆盖所有 shell：返回所有应当写入的 rc 文件（已存在的，加上当前 shell 的默认文件）
+function detectRcFiles() {
+  if (process.env.CCP_RC_FILE) return process.env.CCP_RC_FILE.split(',').filter(Boolean); // 测试用
+  const home = os.homedir();
+  const targets = new Set();
+  // 各 shell 的候选 rc；存在即写
+  const candidates = [
+    '.zshrc', '.zprofile',        // zsh（macOS 默认）
+    '.bashrc', '.bash_profile',   // bash
+    '.profile',                   // POSIX sh / 登录 shell 通吃
+    '.config/fish/config.fish',   // fish
+  ];
+  for (const rel of candidates) {
+    const p = path.join(home, rel);
+    if (fs.existsSync(p)) targets.add(p);
+  }
+  // 保底：当前 $SHELL 的主 rc 即使还不存在也创建
+  const shell = path.basename(process.env.SHELL || 'zsh');
+  if (shell === 'bash') targets.add(path.join(home, '.bashrc'));
+  else if (shell === 'fish') targets.add(path.join(home, '.config/fish/config.fish'));
+  else targets.add(path.join(home, '.zshrc'));
+  return [...targets];
+}
+
+function proxyBlock(rcFile) {
+  const url = `http://127.0.0.1:${PROXY_PORT}`;
+  if (rcFile.endsWith('config.fish')) {
+    return `${RC_START}
+# Routes \`claude\` through the local inspector proxy when the panel is running.
+# Remove with: npx claude-code-panel uninstall-proxy
+function claude
+    if test -z "$ANTHROPIC_BASE_URL"; and nc -z 127.0.0.1 ${PROXY_PORT} 2>/dev/null
+        ANTHROPIC_BASE_URL=${url} command claude $argv
+    else
+        command claude $argv
+    end
+end
+${RC_END}`;
+  }
+  return `${RC_START}
+# Routes \`claude\` through the local inspector proxy when the panel is running.
+# Falls back to a direct connection when the panel is off. Remove with: npx claude-code-panel uninstall-proxy
+claude() {
+  if [ -z "$ANTHROPIC_BASE_URL" ] && command -v nc >/dev/null 2>&1 && nc -z 127.0.0.1 ${PROXY_PORT} 2>/dev/null; then
+    ANTHROPIC_BASE_URL="${url}" command claude "$@"
+  else
+    command claude "$@"
+  fi
+}
+${RC_END}`;
+}
+
+const rcEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function installProxy() {
+  const files = detectRcFiles();
+  const re = new RegExp(rcEsc(RC_START) + '[\\s\\S]*?' + rcEsc(RC_END));
+  const done = [];
+  for (const rc of files) {
+    let content = '';
+    try { content = fs.readFileSync(rc, 'utf8'); } catch {}
+    const block = proxyBlock(rc);
+    let next, action;
+    if (re.test(content)) {
+      next = content.replace(re, block); action = 'updated';
+    } else {
+      if (content) { try { fs.writeFileSync(rc + '.ccp-bak', content); } catch {} }
+      next = content + (content && !content.endsWith('\n') ? '\n' : '') + '\n' + block + '\n';
+      action = 'installed';
+    }
+    try {
+      fs.mkdirSync(path.dirname(rc), { recursive: true });
+      fs.writeFileSync(rc, next);
+      done.push(`  ${action === 'updated' ? '↻' : '+'} ${rc}`);
+    } catch (e) { done.push(`  ✗ ${rc} (${e.message})`); }
+  }
+  console.log(`✅ Inspector proxy set up in ${done.length} shell file(s):`);
+  console.log(done.join('\n'));
+  console.log(`\n   \`claude\` now routes through http://127.0.0.1:${PROXY_PORT} whenever the panel is running,`);
+  console.log(`   and connects directly when it's off — no breakage either way.`);
+  console.log(`\n   Open a new terminal (or source your rc) and just run:  claude`);
+}
+
+function uninstallProxy() {
+  const files = detectRcFiles();
+  const re = new RegExp('\\n*' + rcEsc(RC_START) + '[\\s\\S]*?' + rcEsc(RC_END) + '\\n*');
+  let n = 0;
+  for (const rc of files) {
+    let content = '';
+    try { content = fs.readFileSync(rc, 'utf8'); } catch { continue; }
+    if (!re.test(content)) continue;
+    fs.writeFileSync(rc, content.replace(re, '\n'));
+    console.log(`  − ${rc}`);
+    n++;
+  }
+  console.log(n ? `✅ Removed proxy block from ${n} file(s). Open a new terminal to apply.` : 'ℹ No claude-code-panel block found.');
+}
+
+const CLI_CMD = process.argv[2];
+if (CLI_CMD === 'install-proxy') { installProxy(); process.exit(0); }
+if (CLI_CMD === 'uninstall-proxy') { uninstallProxy(); process.exit(0); }
+if (CLI_CMD === '--help' || CLI_CMD === '-h') {
+  console.log('claude-code-panel            start the panel + inspector proxy');
+  console.log('claude-code-panel install-proxy    add a smart `claude` wrapper to your shell rc');
+  console.log('claude-code-panel uninstall-proxy  remove it');
+  process.exit(0);
+}
 const CLAUDE_DIR = process.env.CLAUDE_DIR || path.join(os.homedir(), '.claude');
 
 const TYPES = {
@@ -1450,5 +1564,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`Claude Panel 已启动: http://localhost:${PORT}`);
   console.log(`管理目录: ${CLAUDE_DIR}`);
-  console.log(`Inspector 代理: http://localhost:${PROXY_PORT}  (用法: ANTHROPIC_BASE_URL=http://localhost:${PROXY_PORT} claude)`);
+  console.log(`Inspector 代理: http://localhost:${PROXY_PORT}`);
+  console.log(`  一次性接入所有终端:  npx claude-code-panel install-proxy`);
+  console.log(`  （之后每次 claude 自动走代理；面板没开时自动直连，不会中断）`);
 });

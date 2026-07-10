@@ -73,6 +73,16 @@ node server.js
 | `PORT` | `4321` | HTTP 端口 |
 | `CLAUDE_DIR` | `~/.claude` | 要管理的 Claude Code 目录 |
 
+### 一条命令接入 Inspector
+
+不用每次手动加前缀，一次性把代理写进所有 shell：
+
+```bash
+npx claude-code-panel install-proxy   # 向 .zshrc / .bashrc / fish 写入智能 claude 包装函数
+```
+
+包装函数**在调用时**探测面板是否在运行：在就走 Inspector，不在就直连——面板没开也不会中断。随时用 `uninstall-proxy` 移除。
+
 ### 终端状态栏集成
 
 让 Claude Code 终端底部实时显示今日花费。在 `~/.claude/settings.json` 加：

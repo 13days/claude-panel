@@ -73,6 +73,16 @@ Environment variables:
 | `PORT` | `4321` | HTTP port |
 | `CLAUDE_DIR` | `~/.claude` | The Claude Code directory to manage |
 
+### One-command Inspector setup
+
+Instead of prefixing every launch, wire the proxy into all your shells once:
+
+```bash
+npx claude-code-panel install-proxy   # writes a smart `claude` wrapper to .zshrc / .bashrc / fish
+```
+
+The wrapper checks whether the panel is running **at call time**: if it is, `claude` routes through the inspector; if not, it connects directly — so it never breaks when the panel is off. Remove it anytime with `uninstall-proxy`.
+
 ### Terminal statusline integration
 
 Show today's spend at the bottom of your Claude Code terminal. In `~/.claude/settings.json`:
