@@ -285,8 +285,9 @@ const I18N = {
     wDaysUnit: '天', wDownload: '下载 PNG', wR7: '过去 7 天', wR30: '过去 30 天',
     bNight: '🦉 深夜码农', bBurner: '🔥 Token 燃烧机', bStreak: '⚡ 连肝选手', bShip: '🚀 稳定输出',
     searchSessionsPh: '搜标题；回车全文搜索会话内容…', srNone: '没有找到匹配的会话内容',
-    replayBtn: '▶ 完整回放', replayBack: '← 返回会话详情', replayTruncated: '（会话过长，仅显示前 400 轮）',
+    replayBtn: '▶ 完整回放 · 系统提示词 · 思考 · 工具轨迹', replayBack: '← 返回会话详情', replayTruncated: '（会话过长，仅显示前 400 轮）',
     replayThinking: '💭 思考过程', replayInput: '输入', replayResult: '返回结果', replayTurnMeta: '本轮耗时 {s} 秒 · {n} 条消息',
+        replaySub: '一次生成的完整 trace：用户消息、思考过程、每次工具调用的输入与返回。若该会话经过 Inspector 代理，还会带上真实系统提示词和客户端版本。', replayCaptured: '本会话已被 Inspector 抓取 · Claude Code {v} · 下方为真实系统提示词与思考', 
     insEmpty: '还没有抓到流量。用下面的命令启动 Claude Code，所有 API 请求就会出现在这里：', insCopy: '复制命令',
     insSystem: '📜 系统提示词', insThinking: '💭 思考过程（完整）', insTools: '🧰 工具定义', insLastUser: '最后一条用户消息',
     insResponse: '💬 响应文本', insUsage: '用量', insHint: '仅内存保留最近 50 个请求，敏感头（API Key）不会被记录',
@@ -333,8 +334,9 @@ const I18N = {
     wDaysUnit: 'days', wDownload: 'Download PNG', wR7: 'Last 7 days', wR30: 'Last 30 days',
     bNight: '🦉 Night Owl', bBurner: '🔥 Token Burner', bStreak: '⚡ On a Streak', bShip: '🚀 Steady Shipper',
     searchSessionsPh: 'Filter titles; press Enter for full-text search…', srNone: 'No matching session content',
-    replayBtn: '▶ Full replay', replayBack: '← Back to session', replayTruncated: '(long session, first 400 turns shown)',
+    replayBtn: '▶ Full replay · system prompt · thinking · tools', replayBack: '← Back to session', replayTruncated: '(long session, first 400 turns shown)',
     replayThinking: '💭 Thinking', replayInput: 'Input', replayResult: 'Result', replayTurnMeta: 'Turn took {s}s · {n} messages',
+        replaySub: 'The full generation trace: user messages, thinking, and every tool call with its input and result. If this session went through the Inspector proxy, the real system prompt and client version are included too.', replayCaptured: 'Captured by Inspector · Claude Code {v} · real system prompt & thinking below', 
     insEmpty: 'No traffic captured yet. Launch Claude Code with the command below and every API request will show up here:', insCopy: 'Copy command',
     insSystem: '📜 System prompt', insThinking: '💭 Thinking (full)', insTools: '🧰 Tool definitions', insLastUser: 'Last user message',
     insResponse: '💬 Response text', insUsage: 'Usage', insHint: 'Last 50 requests kept in memory only; sensitive headers (API keys) are never recorded',
@@ -381,8 +383,9 @@ const I18N = {
     wDaysUnit: '日', wDownload: 'PNG をダウンロード', wR7: '過去7日間', wR30: '過去30日間',
     bNight: '🦉 夜型エンジニア', bBurner: '🔥 トークンバーナー', bStreak: '⚡ 連続作業の達人', bShip: '🚀 安定稼働',
     searchSessionsPh: 'タイトル検索；Enter で全文検索…', srNone: '一致するセッション内容がありません',
-    replayBtn: '▶ フル再生', replayBack: '← セッション詳細に戻る', replayTruncated: '（長いセッションのため先頭400ターンのみ表示）',
+    replayBtn: '▶ フル再生 · システムプロンプト · 思考 · ツール', replayBack: '← セッション詳細に戻る', replayTruncated: '（長いセッションのため先頭400ターンのみ表示）',
     replayThinking: '💭 思考プロセス', replayInput: '入力', replayResult: '結果', replayTurnMeta: 'このターン {s} 秒 · {n} メッセージ',
+        replaySub: '生成の完全トレース：ユーザーメッセージ、思考、各ツール呼び出しの入力と結果。Inspector プロキシ経由のセッションなら実際のシステムプロンプトとクライアントバージョンも含みます。', replayCaptured: 'Inspector が捕捉 · Claude Code {v} · 実際のシステムプロンプトと思考は下記', 
     insEmpty: 'まだトラフィックがありません。以下のコマンドで Claude Code を起動すると、全 API リクエストがここに表示されます：', insCopy: 'コマンドをコピー',
     insSystem: '📜 システムプロンプト', insThinking: '💭 思考プロセス（完全）', insTools: '🧰 ツール定義', insLastUser: '最後のユーザーメッセージ',
     insResponse: '💬 応答テキスト', insUsage: '使用量', insHint: '直近50リクエストのみメモリ保持。APIキー等の機密ヘッダーは記録されません',
@@ -548,12 +551,18 @@ async function openItem(key, displayName) {
     setEditMode(false);
     renderDoc(d);
     if (state.type === 'sessions' && d.session) {
+      const box = document.createElement('div');
+      box.style.cssText = 'margin:0 0 18px;padding:14px 16px;border:1px solid rgba(217,123,79,.4);border-radius:12px;background:rgba(217,123,79,.08)';
       const rb = document.createElement('button');
       rb.className = 'btn primary';
-      rb.style.margin = '0 0 16px';
+      rb.style.fontSize = '14px';
       rb.textContent = t('replayBtn');
       rb.onclick = () => loadReplay(key);
-      $('#render').prepend(rb);
+      const sub = document.createElement('div');
+      sub.style.cssText = 'font-size:12px;color:var(--muted);margin-top:8px';
+      sub.textContent = t('replaySub');
+      box.append(rb, sub);
+      $('#render').prepend(box);
     }
     renderList();
   } catch (e) { toast(t('loadFail') + e.message, false); }
@@ -698,6 +707,25 @@ async function loadReplay(id) {
     back.textContent = t('replayBack');
     back.onclick = () => openItem(id);
     wrap.appendChild(back);
+    // 抓包关联：系统提示词 + 客户端版本（transcript 没有，来自 Inspector 代理）
+    if (r.captured) {
+      const banner = document.createElement('div');
+      banner.style.cssText = 'margin-bottom:14px;padding:10px 14px;border:1px solid rgba(144,133,233,.4);border-radius:10px;background:rgba(144,133,233,.08);font-size:12px;color:#a99ff0';
+      banner.textContent = '🕵️ ' + fmt(t('replayCaptured'), { v: r.clientVersion || '?' });
+      wrap.appendChild(banner);
+    }
+    if (r.systemPrompt) {
+      const det = document.createElement('details');
+      det.style.marginBottom = '14px';
+      const sum = document.createElement('summary');
+      sum.textContent = t('insSystem') + ' (' + (r.systemPrompt.length/1000).toFixed(1) + 'k chars)';
+      sum.style.cssText = 'cursor:pointer;font-weight:700;font-size:14px;color:var(--accent2);padding:6px 0';
+      const pre = document.createElement('pre');
+      pre.style.cssText = 'background:var(--code-bg);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:50vh;overflow:auto;margin-top:8px';
+      pre.textContent = r.systemPrompt;
+      det.append(sum, pre);
+      wrap.appendChild(det);
+    }
     for (const turn of r.turns) {
       if (turn.role === 'meta') {
         const meta = document.createElement('div');
@@ -715,7 +743,7 @@ async function loadReplay(id) {
       if (turn.thinking) {
         const det = document.createElement('details');
         det.className = 'thinking';
-        const sum = document.createElement('summary'); sum.textContent = t('replayThinking');
+        const sum = document.createElement('summary'); sum.textContent = t('replayThinking') + (turn.thinkingLive ? ' 🕵️' : '');
         const pre = document.createElement('pre'); pre.textContent = turn.thinking;
         det.append(sum, pre);
         b.appendChild(det);

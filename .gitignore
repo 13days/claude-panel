@@ -2,3 +2,5 @@ node_modules/
 demo-data/
 *.log
 .DS_Store
+panel-captures.jsonl
+panel-config.json

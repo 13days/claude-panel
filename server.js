@@ -814,7 +814,7 @@ function sessionReplay(id) {
         result: toolResults.get(b.id) || '',
       }));
       if (!text.trim() && !tools.length && !thinking) continue;
-      const turn = { role: 'assistant', ts: d.timestamp || '', text: text.slice(0, 6000), thinking, tools, model: m.model || '' };
+      const turn = { role: 'assistant', ts: d.timestamp || '', text: text.slice(0, 6000), thinking, tools, model: m.model || '', msgId: m.id || '' };
       if (m.id) {
         const prev = byMsgId.get(m.id);
         if (prev) {
@@ -829,8 +829,26 @@ function sessionReplay(id) {
       turns.push(turn);
     }
   }
+  // 关联 Inspector 抓包：响应 message.id 匹配到本会话的轮次，
+  // 就把真实系统提示词 / 思考过程 / 客户端版本回填进回放（这些 transcript 里没有）
+  const msgIds = new Set(turns.filter(x => x.role === 'assistant' && x.msgId).map(x => x.msgId));
+  let systemPrompt = '', clientVersion = '', userAgent = '';
+  const liveThink = {};
+  for (const rec of _inspect) {
+    if (!rec.respMsgId || !msgIds.has(rec.respMsgId)) continue;
+    if (!systemPrompt && rec.system) systemPrompt = rec.system;
+    if (!clientVersion && rec.clientVersion) clientVersion = rec.clientVersion;
+    if (!userAgent && rec.userAgent) userAgent = rec.userAgent;
+    if (rec.thinking) liveThink[rec.respMsgId] = rec.thinking;
+  }
+  for (const turn of turns) {
+    if (turn.role === 'assistant' && turn.msgId && liveThink[turn.msgId] && !turn.thinking) {
+      turn.thinking = liveThink[turn.msgId];
+      turn.thinkingLive = true;
+    }
+  }
   const truncated = turns.length > 400;
-  return { id, project, turns: turns.slice(0, 400), truncated };
+  return { id, project, turns: turns.slice(0, 400), truncated, systemPrompt, clientVersion, userAgent, captured: !!systemPrompt };
 }
 
 // ---------- Live 快照 / 面板配置（预算） ----------
@@ -1162,13 +1180,40 @@ function readBody(req) {
 // ---------- Inspector：本地反向代理抓包 ----------
 // 用法：ANTHROPIC_BASE_URL=http://localhost:<PROXY_PORT> claude
 // 面板即可看到每个请求的完整 payload（系统提示词、工具定义、消息、流式响应含 thinking）
-const INSPECT_MAX = 50;
+const INSPECT_MAX = 200;
+const CAPTURES_FILE = path.join(CLAUDE_DIR, 'panel-captures.jsonl');
 const _inspect = []; // 环形缓冲，最新在前
 let _inspectSeq = 0;
+let _capturesAppended = 0;
+
+// 启动时从磁盘恢复抓包记录（避免重启后丢失）
+function loadCaptures() {
+  try {
+    const lines = fs.readFileSync(CAPTURES_FILE, 'utf8').split('\n').filter(Boolean);
+    for (const line of lines.slice(-INSPECT_MAX)) {
+      try { _inspect.unshift(JSON.parse(line)); } catch {}
+    }
+    _capturesAppended = lines.length;
+    for (const r of _inspect) if (r.id > _inspectSeq) _inspectSeq = r.id;
+  } catch {}
+}
+
+function persistCapture(rec) {
+  try {
+    fs.appendFileSync(CAPTURES_FILE, JSON.stringify(rec) + '\n');
+    _capturesAppended++;
+    // 文件太大时压实为最近 INSPECT_MAX 条
+    if (_capturesAppended > INSPECT_MAX * 3) {
+      const keep = _inspect.slice(0, INSPECT_MAX).reverse().map(r => JSON.stringify(r)).join('\n');
+      fs.writeFileSync(CAPTURES_FILE, keep + '\n');
+      _capturesAppended = _inspect.length;
+    }
+  } catch {}
+}
 
 function sseExtract(raw) {
-  // 从流式响应里抽取：输出文本、thinking、usage
-  let text = '', thinking = '', usage = null, model = '';
+  // 从流式响应里抽取：输出文本、thinking、usage、响应消息 id（用于和 transcript 关联）
+  let text = '', thinking = '', usage = null, model = '', msgId = '';
   for (const line of raw.split('\n')) {
     if (!line.startsWith('data:')) continue;
     let ev;
@@ -1179,17 +1224,29 @@ function sseExtract(raw) {
     }
     if (ev.type === 'message_start' && ev.message) {
       model = ev.message.model || '';
+      msgId = ev.message.id || '';
       usage = ev.message.usage || usage;
     }
     if (ev.type === 'message_delta' && ev.usage) usage = { ...usage, ...ev.usage };
   }
-  return { text, thinking, usage, model };
+  return { text, thinking, usage, model, msgId };
 }
 
-function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream) {
+// 从 user-agent 提取 Claude Code 版本，如 "claude-cli/2.1.3 (external, cli)" → "2.1.3"
+function parseClientVersion(ua) {
+  if (!ua) return '';
+  const m = ua.match(/claude-cli\/(\S+)/i) || ua.match(/(\d+\.\d+\.\d+)/);
+  return m ? m[1] : '';
+}
+
+function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream, reqHeaders) {
+  const ua = (reqHeaders && (reqHeaders['user-agent'] || reqHeaders['User-Agent'])) || '';
   let rec = {
     id: ++_inspectSeq, ts: new Date().toISOString(), path: reqPath, status, durationMs,
-    model: '', system: '', tools: [], messagesCount: 0, lastUser: '',
+    model: '', system: '', tools: [], messagesCount: 0, lastUser: '', respMsgId: '',
+    userAgent: ua.slice(0, 300), clientVersion: parseClientVersion(ua),
+    anthropicVersion: (reqHeaders && reqHeaders['anthropic-version']) || '',
+    betas: (reqHeaders && (reqHeaders['anthropic-beta'] || '')).slice(0, 300),
     outText: '', thinking: '', usage: null,
     requestBytes: reqBody.length, responseBytes: resBody.length,
   };
@@ -1211,17 +1268,20 @@ function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream)
       rec.outText = s.text.slice(0, 8000);
       rec.thinking = s.thinking.slice(0, 8000);
       rec.usage = s.usage;
+      rec.respMsgId = s.msgId;
       if (!rec.model) rec.model = s.model;
     } else {
       const r = JSON.parse(rtext);
       rec.outText = extractText(r.content).slice(0, 8000);
       rec.usage = r.usage || null;
+      rec.respMsgId = r.id || '';
       if (!rec.model) rec.model = r.model || '';
     }
   } catch {}
   rec.system = rec.system.slice(0, 200000);
   _inspect.unshift(rec);
   if (_inspect.length > INSPECT_MAX) _inspect.pop();
+  persistCapture(rec);
 }
 
 const proxyServer = http.createServer((req, res) => {
@@ -1247,7 +1307,7 @@ const proxyServer = http.createServer((req, res) => {
         res.end();
         if (req.url.includes('/messages')) {
           const isStream = String(ur.headers['content-type'] || '').includes('event-stream');
-          try { recordExchange(req.url, ur.statusCode, Date.now() - started, body, Buffer.concat(rchunks), isStream); } catch {}
+          try { recordExchange(req.url, ur.statusCode, Date.now() - started, body, Buffer.concat(rchunks), isStream, req.headers); } catch {}
         }
       });
     });
@@ -1257,6 +1317,7 @@ const proxyServer = http.createServer((req, res) => {
     up.end(body);
   });
 });
+loadCaptures();
 proxyServer.listen(PROXY_PORT, '127.0.0.1');
 
 // ---------- server ----------
@@ -1354,7 +1415,7 @@ const server = http.createServer(async (req, res) => {
           items: _inspect.map(r => ({
             key: String(r.id),
             name: `${shortModel(r.model || '?')} · ${r.status}`,
-            description: `${r.ts.slice(11, 19)} · ${r.messagesCount} msgs · ${Math.round(r.durationMs / 1000)}s · ${fmtK(r.requestBytes)}→${fmtK(r.responseBytes)}${r.thinking ? ' · 💭' : ''}`,
+            description: `${r.ts.slice(11, 19)}${r.clientVersion ? ' · cli ' + r.clientVersion : ''} · ${r.messagesCount} msgs · ${Math.round(r.durationMs / 1000)}s${r.thinking ? ' · 💭' : ''}`,
             origin: 'user',
           })),
         });
@@ -1365,6 +1426,8 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'DELETE' && parts.length === 2) {
         _inspect.length = 0;
+        _capturesAppended = 0;
+        try { fs.writeFileSync(CAPTURES_FILE, ''); } catch {}
         return sendJSON(res, 200, { ok: true });
       }
       return sendJSON(res, 405, { error: 'method not allowed' });
