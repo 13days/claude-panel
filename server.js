@@ -10,6 +10,7 @@
  */
 const http = require('http');
 const https = require('https');
+const zlib = require('zlib');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -1273,7 +1274,18 @@ function parseClientVersion(ua) {
   return m ? m[1] : '';
 }
 
-function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream, reqHeaders) {
+// 按 content-encoding 解压响应体（Anthropic API 会 gzip/br 压缩，直接 toString 是乱码）
+function decodeBody(buf, encoding) {
+  try {
+    if (encoding === 'gzip') return zlib.gunzipSync(buf);
+    if (encoding === 'br') return zlib.brotliDecompressSync(buf);
+    if (encoding === 'deflate') return zlib.inflateSync(buf);
+  } catch {}
+  return buf;
+}
+
+function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream, reqHeaders, resEncoding) {
+  resBody = decodeBody(resBody, resEncoding);
   const ua = (reqHeaders && (reqHeaders['user-agent'] || reqHeaders['User-Agent'])) || '';
   let rec = {
     id: ++_inspectSeq, ts: new Date().toISOString(), path: reqPath, status, durationMs,
@@ -1344,7 +1356,7 @@ const proxyServer = http.createServer((req, res) => {
         res.end();
         if (req.url.includes('/messages')) {
           const isStream = String(ur.headers['content-type'] || '').includes('event-stream');
-          try { recordExchange(req.url, ur.statusCode, Date.now() - started, body, Buffer.concat(rchunks), isStream, req.headers); } catch {}
+          try { recordExchange(req.url, ur.statusCode, Date.now() - started, body, Buffer.concat(rchunks), isStream, req.headers, ur.headers['content-encoding']); } catch {}
         }
       });
     });
