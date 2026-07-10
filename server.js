@@ -886,14 +886,25 @@ function sessionReplay(id) {
     if (!userAgent && cap.userAgent) userAgent = cap.userAgent;
     if (cap.thinking && !turn.thinking) { turn.thinking = cap.thinking; turn.thinkingLive = true; }
   }
-  // 本会话的 LLM 通信轮次（每个抓包 = 一次 API 往返），点击可看每轮完整请求/响应
-  const rounds = _inspect
-    .filter(r => r.respMsgId && msgIds.has(r.respMsgId))
-    .map(r => ({ id: r.id, model: shortModel(r.model || '?'), ts: r.ts, durationMs: r.durationMs,
-      messagesCount: r.messagesCount, responseBytes: r.responseBytes, hasThinking: !!r.thinking, toolCount: (r.tools || []).length }))
-    .sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+  // 每个抓包（一次 API 往返）按响应 message.id 建索引
+  const roundByMsg = new Map();
+  for (const r of _inspect) {
+    if (r.respMsgId && msgIds.has(r.respMsgId)) {
+      roundByMsg.set(r.respMsgId, { id: r.id, model: shortModel(r.model || '?'), ts: r.ts,
+        durationMs: r.durationMs, messagesCount: r.messagesCount, hasThinking: !!r.thinking, toolCount: (r.tools || []).length });
+    }
+  }
+  // 把每轮归到它所属的用户提问下：一条 query 后、下一条 query 前的所有 assistant 轮次都属于它
+  let curUser = null, totalRounds = 0;
+  for (const turn of turns) {
+    if (turn.role === 'user') { curUser = turn; turn.rounds = []; }
+    else if (turn.role === 'assistant' && turn.msgId && curUser) {
+      const rd = roundByMsg.get(turn.msgId);
+      if (rd) { curUser.rounds.push(rd); totalRounds++; }
+    }
+  }
   const truncated = turns.length > 400;
-  return { id, project, turns: turns.slice(0, 400), truncated, systemPrompt, toolDefs, clientVersion, userAgent, captured: !!systemPrompt, proxyInstalled: isProxyHookInstalled(), rounds };
+  return { id, project, turns: turns.slice(0, 400), truncated, systemPrompt, toolDefs, clientVersion, userAgent, captured: !!systemPrompt, proxyInstalled: isProxyHookInstalled(), totalRounds };
 }
 
 // ---------- Live 快照 / 面板配置（预算） ----------
