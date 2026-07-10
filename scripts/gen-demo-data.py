@@ -259,9 +259,11 @@ for day_off in range(44, -1, -1):
                     lines.append(J({"type": "user", "message": {"role": "user", "content": [
                         {"type": "tool_result", "tool_use_id": tool_id, "content": random.choice(RESULTS)}]},
                         "sessionId": sid, "timestamp": (ats + timedelta(seconds=2)).strftime('%Y-%m-%dT%H:%M:%S.000Z')}))
-                # 记录最新会话首条 assistant，用于生成对齐抓包
-                if day_off == 0 and 'demo_capture' not in globals():
-                    globals()['demo_capture'] = {"sid": sid, "msg_id": msg_id, "model": model}
+                # 记录最新会话的所有 assistant 消息，用于生成多轮对齐抓包
+                if day_off == 0:
+                    globals().setdefault('demo_rounds', [])
+                    if len(globals()['demo_rounds']) < 6:
+                        globals()['demo_rounds'].append({"sid": sid, "msg_id": msg_id, "model": model})
             # 每轮耗时标记
             lines.append(J({"type": "system", "subtype": "turn_duration", "durationMs": random.randint(30000, 400000),
                 "messageCount": random.randint(8, 40), "sessionId": sid, "timestamp": ts.strftime('%Y-%m-%dT%H:%M:%S.000Z')}))
@@ -283,28 +285,45 @@ DEMO_SYSTEM = (
     "Use the TodoWrite tool to plan the task if required. Use search tools to understand the codebase.\n"
     "[... full system prompt captured live via the Inspector proxy ...]"
 )
-cap = globals().get('demo_capture')
-if cap:
-    rec = {
-        "id": 1, "ts": now.strftime('%Y-%m-%dT%H:%M:%S.000Z'), "path": "/v1/messages", "status": 200,
-        "durationMs": 8200, "model": cap["model"], "system": DEMO_SYSTEM,
-        "tools": [
-            {"name": "Bash", "description": "Executes a bash command in a persistent shell session with optional timeout. Use for running scripts, git, package managers. Avoid using it for file search — prefer Grep/Glob."},
-            {"name": "Read", "description": "Reads a file from the local filesystem. Supports images, PDFs and Jupyter notebooks. Returns content with line numbers in cat -n format."},
-            {"name": "Edit", "description": "Performs exact string replacements in a file. You must Read the file before editing. old_string must be unique unless replace_all is set."},
-            {"name": "Write", "description": "Writes a file to the local filesystem, overwriting if it exists. Prefer Edit for partial changes to existing files."},
-            {"name": "Grep", "description": "A powerful search tool built on ripgrep. Supports full regex, glob filtering, and output modes (content / files_with_matches / count)."},
-            {"name": "TodoWrite", "description": "Create and manage a structured task list for the current coding session to track progress and give the user visibility."},
-            {"name": "Task", "description": "Launch a new subagent to handle complex, multi-step tasks autonomously. Choose the agent type that best matches the task."},
-        ],
-        "messagesCount": 12, "lastUser": "Add rate limiting to the public API gateway",
+DEMO_TOOLS = [
+    {"name": "Bash", "description": "Executes a bash command in a persistent shell session with optional timeout. Use for running scripts, git, package managers. Avoid using it for file search — prefer Grep/Glob."},
+    {"name": "Read", "description": "Reads a file from the local filesystem. Supports images, PDFs and Jupyter notebooks. Returns content with line numbers in cat -n format."},
+    {"name": "Edit", "description": "Performs exact string replacements in a file. You must Read the file before editing. old_string must be unique unless replace_all is set."},
+    {"name": "Write", "description": "Writes a file to the local filesystem, overwriting if it exists. Prefer Edit for partial changes to existing files."},
+    {"name": "Grep", "description": "A powerful search tool built on ripgrep. Supports full regex, glob filtering, and output modes (content / files_with_matches / count)."},
+    {"name": "TodoWrite", "description": "Create and manage a structured task list for the current coding session to track progress and give the user visibility."},
+    {"name": "Task", "description": "Launch a new subagent to handle complex, multi-step tasks autonomously. Choose the agent type that best matches the task."},
+]
+# 多轮抓包：模拟一次对话里 Claude Code 的 agentic loop（每轮一次 API 往返）
+ROUND_STEPS = [
+    ("I'll add a token-bucket rate limiter as gateway middleware. Let me check the existing structure first.",
+     "The user wants rate limiting on the public API gateway. A token-bucket limiter fits best. Let me read the gateway entry point before writing code."),
+    ("The gateway registers routes in a single file. I'll add the limiter as middleware there.",
+     "Now I understand the structure. I'll create the limiter module, then wire it into the route registration."),
+    ("Created the limiter and wired it in. Now writing tests for the burst and refill behavior.",
+     "Implementation done. I should add tests covering: normal requests pass, burst is allowed, sustained overflow is 429'd."),
+    ("All tests pass. Rate limiting is live on the gateway with 100 req/min per key and a burst of 20.",
+     "Tests are green. Let me summarize what changed for the user."),
+]
+rounds = globals().get('demo_rounds', [])
+recs = []
+for i, cap in enumerate(rounds[:len(ROUND_STEPS)]):
+    out, think = ROUND_STEPS[i]
+    ts_i = (now + timedelta(seconds=i * 40)).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+    recs.append({
+        "id": i + 1, "ts": ts_i, "path": "/v1/messages", "status": 200,
+        "durationMs": random.randint(4000, 12000), "model": cap["model"], "system": DEMO_SYSTEM,
+        "tools": DEMO_TOOLS,
+        "messagesCount": 4 + i * 3, "lastUser": "Add rate limiting to the public API gateway",
         "respMsgId": cap["msg_id"], "userAgent": "claude-cli/2.1.4 (external, cli)", "clientVersion": "2.1.4",
         "anthropicVersion": "2023-06-01", "betas": "context-1m-2025-08-07",
-        "outText": "I'll add a token-bucket rate limiter as gateway middleware. Let me check the existing structure first.",
-        "thinking": "The user wants rate limiting on the public API gateway. Let me think about the approach:\n\n1. A token-bucket limiter is the right fit here — smooth, allows bursts.\n2. It should live as middleware so every route inherits it.\n3. I need to check how the gateway is currently structured before writing code.\n\nLet me start by reading the gateway entry point.",
-        "usage": {"input_tokens": 4211, "output_tokens": 1876, "cache_read_input_tokens": 812004, "cache_creation_input_tokens": 24500},
-        "requestBytes": 48213, "responseBytes": 9204,
-    }
-    with open(f'{CD}/panel-captures.jsonl', 'w') as f: f.write(json.dumps(rec) + '\n')
+        "outText": out, "thinking": think,
+        "usage": {"input_tokens": random.randint(3000, 6000), "output_tokens": random.randint(400, 2200),
+                  "cache_read_input_tokens": random.randint(600000, 900000), "cache_creation_input_tokens": random.randint(10000, 40000)},
+        "requestBytes": random.randint(40000, 60000), "responseBytes": random.randint(5000, 12000),
+    })
+if recs:
+    with open(f'{CD}/panel-captures.jsonl', 'w') as f:
+        for rec in recs: f.write(json.dumps(rec) + '\n')
 
 print(f'demo ready: {CD}\nsessions={sid_count} history_lines={len(history)}')

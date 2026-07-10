@@ -820,7 +820,7 @@ function sessionReplay(id) {
       const text = typeof c === 'string' ? c
         : Array.isArray(c) ? c.map(x => (x && x.type === 'text') ? x.text : '').join('\n')
         : JSON.stringify(c || '');
-      toolResults.set(b.tool_use_id, (b.is_error ? '⚠ ' : '') + text.slice(0, 4000));
+      toolResults.set(b.tool_use_id, (b.is_error ? '⚠ ' : '') + text.slice(0, 20000));
     }
   }
   // 第二遍：构建对话轮次（含思考过程、工具输入/返回、每轮耗时）
@@ -852,7 +852,7 @@ function sessionReplay(id) {
         .map(b => b.thinking).join('\n\n').slice(0, 4000);
       const tools = content.filter(b => b && b.type === 'tool_use').map(b => ({
         name: b.name,
-        input: JSON.stringify(b.input || {}, null, 2).slice(0, 4000), // 缩进美化，完整参数
+        input: JSON.stringify(b.input || {}, null, 2).slice(0, 20000), // 缩进美化，完整参数
         result: toolResults.get(b.id) || '',
       }));
       if (!text.trim() && !tools.length && !thinking) continue;
@@ -874,8 +874,10 @@ function sessionReplay(id) {
   // 关联 Inspector 抓包：响应 message.id 匹配到本会话的轮次，
   // 就把真实系统提示词 / 思考过程 / 客户端版本回填进回放（这些 transcript 里没有）
   let systemPrompt = '', clientVersion = '', userAgent = '', toolDefs = [];
+  const msgIds = new Set();
   for (const turn of turns) {
     if (turn.role !== 'assistant' || !turn.msgId) continue;
+    msgIds.add(turn.msgId);
     const cap = _captureIndex.get(turn.msgId);
     if (!cap) continue;
     if (!systemPrompt && cap.sysHash) systemPrompt = _systemPool.get(cap.sysHash) || '';
@@ -884,8 +886,14 @@ function sessionReplay(id) {
     if (!userAgent && cap.userAgent) userAgent = cap.userAgent;
     if (cap.thinking && !turn.thinking) { turn.thinking = cap.thinking; turn.thinkingLive = true; }
   }
+  // 本会话的 LLM 通信轮次（每个抓包 = 一次 API 往返），点击可看每轮完整请求/响应
+  const rounds = _inspect
+    .filter(r => r.respMsgId && msgIds.has(r.respMsgId))
+    .map(r => ({ id: r.id, model: shortModel(r.model || '?'), ts: r.ts, durationMs: r.durationMs,
+      messagesCount: r.messagesCount, responseBytes: r.responseBytes, hasThinking: !!r.thinking, toolCount: (r.tools || []).length }))
+    .sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
   const truncated = turns.length > 400;
-  return { id, project, turns: turns.slice(0, 400), truncated, systemPrompt, toolDefs, clientVersion, userAgent, captured: !!systemPrompt, proxyInstalled: isProxyHookInstalled() };
+  return { id, project, turns: turns.slice(0, 400), truncated, systemPrompt, toolDefs, clientVersion, userAgent, captured: !!systemPrompt, proxyInstalled: isProxyHookInstalled(), rounds };
 }
 
 // ---------- Live 快照 / 面板配置（预算） ----------
@@ -1328,7 +1336,7 @@ function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream,
     rec.system = typeof b.system === 'string' ? b.system
       : Array.isArray(b.system) ? b.system.map(s => s.text || '').join('\n\n') : '';
     rec.tools = Array.isArray(b.tools)
-      ? b.tools.map(t => ({ name: t.name, description: (t.description || '').slice(0, 4000) })).filter(t => t.name)
+      ? b.tools.map(t => ({ name: t.name, description: (t.description || '').slice(0, 30000) })).filter(t => t.name)
       : [];
     const lastU = (b.messages || []).filter(m => m.role === 'user').pop();
     if (lastU) rec.lastUser = extractText(lastU.content).slice(0, 500);

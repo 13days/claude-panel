@@ -298,6 +298,7 @@ const I18N = {
     replayThinking: '💭 思考过程', replayInput: '输入', replayResult: '返回结果', replayTurnMeta: '本轮耗时 {s} 秒 · {n} 条消息',
         replaySub: '一次生成的完整 trace：用户消息、思考过程、每次工具调用的输入与返回。若该会话经过 Inspector 代理，还会带上真实系统提示词和客户端版本。', replayCaptured: '本会话已被 Inspector 抓取 · Claude Code {v} · 下方为真实系统提示词与思考', 
         replayNoCapTitle: '⚠ 本次会话没有经过 Inspector 代理，所以看不到系统提示词和真实思考——它们不在 Claude Code 的会话记录文件里，只能在请求发生的当时抓取。历史会话的提示词已无法找回。', replayNoCapHint: '运行上面这条命令接入代理，之后每次 claude 的会话都会在这里自动带上完整系统提示词、工具定义、思考过程和 Claude Code 版本。', 
+        roundsTitle: '🔁 与 LLM 的通信：{n} 轮（点开任意一轮看完整请求/响应）', roundsLoading: '加载中…', 
         replayHistTitle: '⚠ 本次会话没有被抓取——它发生在代理启用之前（历史会话），系统提示词和思考不在会话记录里、已无法找回。', replayHistHint: '代理已接入 ✓。保持面板开着、在新开的终端里正常用 claude，之后的会话会自动带上完整系统提示词、工具定义和思考。', 
     insEmpty: '还没有抓到流量。用下面的命令启动 Claude Code，所有 API 请求就会出现在这里：', insCopy: '复制命令',
     insSystem: '📜 系统提示词', insThinking: '💭 思考过程（完整）', insTools: '🧰 工具定义', insLastUser: '最后一条用户消息',
@@ -349,6 +350,7 @@ const I18N = {
     replayThinking: '💭 Thinking', replayInput: 'Input', replayResult: 'Result', replayTurnMeta: 'Turn took {s}s · {n} messages',
         replaySub: 'The full generation trace: user messages, thinking, and every tool call with its input and result. If this session went through the Inspector proxy, the real system prompt and client version are included too.', replayCaptured: 'Captured by Inspector · Claude Code {v} · real system prompt & thinking below', 
         replayNoCapTitle: '⚠ This session did not go through the Inspector proxy, so the system prompt and real thinking are not available — they are not stored in Claude Code transcripts and can only be captured live. Past sessions cannot be recovered.', replayNoCapHint: 'Run the command above to enable the proxy; every future claude session will then show its full system prompt, tool definitions, thinking, and Claude Code version right here.', 
+        roundsTitle: '🔁 LLM round-trips: {n} (expand any round for its full request/response)', roundsLoading: 'Loading…', 
         replayHistTitle: '⚠ This session was not captured — it predates the proxy (a historical session). Its system prompt and thinking are not in the transcript and cannot be recovered.', replayHistHint: 'The proxy is already set up ✓. Keep the panel running and use claude in a freshly opened terminal; future sessions will include the full system prompt, tool definitions and thinking automatically.', 
     insEmpty: 'No traffic captured yet. Launch Claude Code with the command below and every API request will show up here:', insCopy: 'Copy command',
     insSystem: '📜 System prompt', insThinking: '💭 Thinking (full)', insTools: '🧰 Tool definitions', insLastUser: 'Last user message',
@@ -400,6 +402,7 @@ const I18N = {
     replayThinking: '💭 思考プロセス', replayInput: '入力', replayResult: '結果', replayTurnMeta: 'このターン {s} 秒 · {n} メッセージ',
         replaySub: '生成の完全トレース：ユーザーメッセージ、思考、各ツール呼び出しの入力と結果。Inspector プロキシ経由のセッションなら実際のシステムプロンプトとクライアントバージョンも含みます。', replayCaptured: 'Inspector が捕捉 · Claude Code {v} · 実際のシステムプロンプトと思考は下記', 
         replayNoCapTitle: '⚠ このセッションは Inspector プロキシを経由していないため、システムプロンプトと実際の思考は表示できません——これらは Claude Code のトランスクリプトに保存されず、リクエスト時にのみ捕捉できます。過去のセッションは復元できません。', replayNoCapHint: '上記のコマンドでプロキシを有効にすると、以降の claude セッションは完全なシステムプロンプト、ツール定義、思考、Claude Code バージョンをここに表示します。', 
+        roundsTitle: '🔁 LLM との通信：{n} 往復（各ラウンドを展開して完全なリクエスト/レスポンスを表示）', roundsLoading: '読み込み中…', 
         replayHistTitle: '⚠ このセッションは捕捉されていません——プロキシ有効化より前の履歴セッションで、システムプロンプトと思考はトランスクリプトになく復元できません。', replayHistHint: 'プロキシは設定済み ✓。パネルを起動したまま、新しく開いたターミナルで claude を使えば、以降のセッションはシステムプロンプト・ツール定義・思考を自動的に含みます。', 
     insEmpty: 'まだトラフィックがありません。以下のコマンドで Claude Code を起動すると、全 API リクエストがここに表示されます：', insCopy: 'コマンドをコピー',
     insSystem: '📜 システムプロンプト', insThinking: '💭 思考プロセス（完全）', insTools: '🧰 ツール定義', insLastUser: '最後のユーザーメッセージ',
@@ -754,6 +757,50 @@ async function loadReplay(id) {
       pre.textContent = r.systemPrompt;
       det.append(sum, pre);
       wrap.appendChild(det);
+    }
+    // 🔁 LLM 通信轮次：这次对话走了几轮 API 往返，每轮点开看完整请求/响应
+    if (r.rounds && r.rounds.length) {
+      const sec = document.createElement('div');
+      sec.style.cssText = 'margin-bottom:14px;padding:12px 16px;border:1px solid rgba(217,123,79,.4);border-radius:12px;background:rgba(217,123,79,.06)';
+      const hd = document.createElement('div');
+      hd.style.cssText = 'font-weight:700;font-size:14px;color:var(--accent2);margin-bottom:10px';
+      hd.textContent = fmt(t('roundsTitle'), { n: r.rounds.length });
+      sec.appendChild(hd);
+      r.rounds.forEach((rd, i) => {
+        const det = document.createElement('details');
+        det.style.cssText = 'border-top:1px solid var(--border);padding:6px 0';
+        const sum = document.createElement('summary');
+        sum.style.cssText = 'cursor:pointer;font-size:12.5px;font-family:ui-monospace,monospace;color:var(--text)';
+        sum.textContent = `#${i + 1} · ${rd.model} · ${rd.messagesCount} msgs · ${Math.round(rd.durationMs / 1000)}s · ${rd.toolCount} tools${rd.hasThinking ? ' · 💭' : ''}`;
+        det.appendChild(sum);
+        const body = document.createElement('div');
+        body.style.cssText = 'padding:8px 0;font-size:12px;color:var(--muted)';
+        body.textContent = t('roundsLoading');
+        det.appendChild(body);
+        let loaded = false;
+        det.addEventListener('toggle', async () => {
+          if (!det.open || loaded) return;
+          loaded = true;
+          try {
+            const d = await api('GET', 'inspector/' + rd.id);
+            body.innerHTML = '';
+            const add = (label, text, mono) => {
+              if (!text) return;
+              const l = document.createElement('div'); l.className = 'tlabel'; l.textContent = label;
+              const p = document.createElement('pre');
+              p.style.cssText = 'background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:11.5px;white-space:pre-wrap;word-break:break-word;max-height:40vh;overflow:auto;margin:4px 0 10px' + (mono ? '' : ';font-family:inherit');
+              p.textContent = text;
+              body.append(l, p);
+            };
+            if (d.usage) add(t('insUsage'), `in ${(d.usage.input_tokens||0).toLocaleString()} · out ${(d.usage.output_tokens||0).toLocaleString()} · cache-r ${(d.usage.cache_read_input_tokens||0).toLocaleString()} · cache-w ${(d.usage.cache_creation_input_tokens||0).toLocaleString()}`, true);
+            add(t('insLastUser'), d.lastUser, false);
+            add(t('replayThinking'), d.thinking, false);
+            add(t('insResponse'), d.outText, false);
+          } catch (e) { body.textContent = t('loadFail') + e.message; }
+        });
+        sec.appendChild(det);
+      });
+      wrap.appendChild(sec);
     }
     // 🧰 抓包到的工具定义（含完整描述）
     if (r.toolDefs && r.toolDefs.length) {
