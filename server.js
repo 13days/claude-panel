@@ -9,11 +9,13 @@
  *   - Agent ~/.claude/agents/<name>.md
  */
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
 const PORT = process.env.PORT || 4321;
+const PROXY_PORT = process.env.PROXY_PORT || Number(PORT) + 1;
 const CLAUDE_DIR = process.env.CLAUDE_DIR || path.join(os.homedir(), '.claude');
 
 const TYPES = {
@@ -1043,6 +1045,106 @@ function readBody(req) {
   });
 }
 
+// ---------- Inspector：本地反向代理抓包 ----------
+// 用法：ANTHROPIC_BASE_URL=http://localhost:<PROXY_PORT> claude
+// 面板即可看到每个请求的完整 payload（系统提示词、工具定义、消息、流式响应含 thinking）
+const INSPECT_MAX = 50;
+const _inspect = []; // 环形缓冲，最新在前
+let _inspectSeq = 0;
+
+function sseExtract(raw) {
+  // 从流式响应里抽取：输出文本、thinking、usage
+  let text = '', thinking = '', usage = null, model = '';
+  for (const line of raw.split('\n')) {
+    if (!line.startsWith('data:')) continue;
+    let ev;
+    try { ev = JSON.parse(line.slice(5)); } catch { continue; }
+    if (ev.type === 'content_block_delta' && ev.delta) {
+      if (ev.delta.type === 'text_delta') text += ev.delta.text || '';
+      if (ev.delta.type === 'thinking_delta') thinking += ev.delta.thinking || '';
+    }
+    if (ev.type === 'message_start' && ev.message) {
+      model = ev.message.model || '';
+      usage = ev.message.usage || usage;
+    }
+    if (ev.type === 'message_delta' && ev.usage) usage = { ...usage, ...ev.usage };
+  }
+  return { text, thinking, usage, model };
+}
+
+function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream) {
+  let rec = {
+    id: ++_inspectSeq, ts: new Date().toISOString(), path: reqPath, status, durationMs,
+    model: '', system: '', tools: [], messagesCount: 0, lastUser: '',
+    outText: '', thinking: '', usage: null,
+    requestBytes: reqBody.length, responseBytes: resBody.length,
+  };
+  try {
+    const b = JSON.parse(reqBody.toString('utf8'));
+    rec.model = b.model || '';
+    rec.messagesCount = Array.isArray(b.messages) ? b.messages.length : 0;
+    // 系统提示词：string 或 [{type:'text',text}] 数组
+    rec.system = typeof b.system === 'string' ? b.system
+      : Array.isArray(b.system) ? b.system.map(s => s.text || '').join('\n\n') : '';
+    rec.tools = Array.isArray(b.tools) ? b.tools.map(t => t.name).filter(Boolean) : [];
+    const lastU = (b.messages || []).filter(m => m.role === 'user').pop();
+    if (lastU) rec.lastUser = extractText(lastU.content).slice(0, 500);
+  } catch {}
+  try {
+    const rtext = resBody.toString('utf8');
+    if (isStream) {
+      const s = sseExtract(rtext);
+      rec.outText = s.text.slice(0, 8000);
+      rec.thinking = s.thinking.slice(0, 8000);
+      rec.usage = s.usage;
+      if (!rec.model) rec.model = s.model;
+    } else {
+      const r = JSON.parse(rtext);
+      rec.outText = extractText(r.content).slice(0, 8000);
+      rec.usage = r.usage || null;
+      if (!rec.model) rec.model = r.model || '';
+    }
+  } catch {}
+  rec.system = rec.system.slice(0, 200000);
+  _inspect.unshift(rec);
+  if (_inspect.length > INSPECT_MAX) _inspect.pop();
+}
+
+const proxyServer = http.createServer((req, res) => {
+  const chunks = [];
+  req.on('data', c => chunks.push(c));
+  req.on('end', () => {
+    const body = Buffer.concat(chunks);
+    const started = Date.now();
+    const headers = { ...req.headers, host: 'api.anthropic.com' };
+    delete headers['content-length'];
+    if (body.length) headers['content-length'] = body.length;
+    const up = https.request({
+      hostname: 'api.anthropic.com', port: 443, path: req.url, method: req.method, headers,
+    }, ur => {
+      res.writeHead(ur.statusCode, ur.headers);
+      const rchunks = [];
+      let rlen = 0;
+      ur.on('data', c => {
+        res.write(c);
+        if (rlen < 8e6) { rchunks.push(c); rlen += c.length; } // 记录上限 8MB
+      });
+      ur.on('end', () => {
+        res.end();
+        if (req.url.includes('/messages')) {
+          const isStream = String(ur.headers['content-type'] || '').includes('event-stream');
+          try { recordExchange(req.url, ur.statusCode, Date.now() - started, body, Buffer.concat(rchunks), isStream); } catch {}
+        }
+      });
+    });
+    up.on('error', e => {
+      try { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('proxy error: ' + e.message); } catch {}
+    });
+    up.end(body);
+  });
+});
+proxyServer.listen(PROXY_PORT, '127.0.0.1');
+
 // ---------- server ----------
 const server = http.createServer(async (req, res) => {
   // 仅本机访问
@@ -1125,6 +1227,30 @@ const server = http.createServer(async (req, res) => {
         try { cfg = JSON.parse(await readBody(req) || '{}'); } catch (e) { return sendJSON(res, 400, { error: T(lang, 'errJson') + e.message }); }
         writePanelConfig({ ...readPanelConfig(), ...cfg });
         _budgetNotifiedDay = ''; // 改预算后重置当日提醒
+        return sendJSON(res, 200, { ok: true });
+      }
+      return sendJSON(res, 405, { error: 'method not allowed' });
+    }
+
+    // ---- Inspector 抓包 ----
+    if (type === 'inspector') {
+      if (req.method === 'GET' && parts.length === 2) {
+        return sendJSON(res, 200, {
+          proxyPort: Number(PROXY_PORT),
+          items: _inspect.map(r => ({
+            key: String(r.id),
+            name: `${shortModel(r.model || '?')} · ${r.status}`,
+            description: `${r.ts.slice(11, 19)} · ${r.messagesCount} msgs · ${Math.round(r.durationMs / 1000)}s · ${fmtK(r.requestBytes)}→${fmtK(r.responseBytes)}${r.thinking ? ' · 💭' : ''}`,
+            origin: 'user',
+          })),
+        });
+      }
+      if (req.method === 'GET' && parts.length === 3) {
+        const r = _inspect.find(x => String(x.id) === decodeURIComponent(parts[2]));
+        return r ? sendJSON(res, 200, r) : sendJSON(res, 404, { error: T(lang, 'errNotFound') });
+      }
+      if (req.method === 'DELETE' && parts.length === 2) {
+        _inspect.length = 0;
         return sendJSON(res, 200, { ok: true });
       }
       return sendJSON(res, 405, { error: 'method not allowed' });
@@ -1324,4 +1450,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`Claude Panel 已启动: http://localhost:${PORT}`);
   console.log(`管理目录: ${CLAUDE_DIR}`);
+  console.log(`Inspector 代理: http://localhost:${PROXY_PORT}  (用法: ANTHROPIC_BASE_URL=http://localhost:${PROXY_PORT} claude)`);
 });

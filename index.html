@@ -177,6 +177,7 @@
     <div class="tab" data-type="plugins">插件<span class="cnt"></span></div>
     <div class="tab" data-type="config">配置<span class="cnt"></span></div>
     <div class="tab" data-type="workflows">工作流<span class="cnt"></span></div>
+    <div class="tab" data-type="inspector">抓包<span class="cnt"></span></div>
     <div class="tab" data-type="sessions">会话<span class="cnt"></span></div>
     <div class="tab" data-type="stats">统计<span class="cnt"></span></div>
   </div>
@@ -254,8 +255,8 @@ const LANGS = [
 const DEFAULT_LANG = 'zh';
 const I18N = {
   zh: {
-    tabs: { commands: '/ 命令', skills: '技能', agents: '智能体', plugins: '插件', config: '配置', workflows: '工作流', sessions: '会话', stats: '统计' },
-    typeLabel: { commands: '命令', skills: '技能', agents: '智能体', plugins: '插件', config: '配置', workflows: '工作流', sessions: '会话', stats: '统计' },
+    tabs: { commands: '/ 命令', skills: '技能', agents: '智能体', plugins: '插件', config: '配置', workflows: '工作流', inspector: '抓包', sessions: '会话', stats: '统计' },
+    typeLabel: { commands: '命令', skills: '技能', agents: '智能体', plugins: '插件', config: '配置', workflows: '工作流', inspector: '请求', sessions: '会话', stats: '统计' },
     search: '搜索名称 / 描述…', mineOnly: '仅自建', all: '全部',
     newBtn: '＋ 新建', edit: '编辑', save: '保存', cancel: '取消', del: '删除', uninstall: '卸载', create: '创建',
     noSelection: '未选择', emptyHint: '← 从左侧选择一个资源，或点击「新建」',
@@ -286,6 +287,9 @@ const I18N = {
     searchSessionsPh: '搜标题；回车全文搜索会话内容…', srNone: '没有找到匹配的会话内容',
     replayBtn: '▶ 完整回放', replayBack: '← 返回会话详情', replayTruncated: '（会话过长，仅显示前 400 轮）',
     replayThinking: '💭 思考过程', replayInput: '输入', replayResult: '返回结果', replayTurnMeta: '本轮耗时 {s} 秒 · {n} 条消息',
+    insEmpty: '还没有抓到流量。用下面的命令启动 Claude Code，所有 API 请求就会出现在这里：', insCopy: '复制命令',
+    insSystem: '📜 系统提示词', insThinking: '💭 思考过程（完整）', insTools: '🧰 工具定义', insLastUser: '最后一条用户消息',
+    insResponse: '💬 响应文本', insUsage: '用量', insHint: '仅内存保留最近 50 个请求，敏感头（API Key）不会被记录',
     liveToday: '今日花费', liveBurn: '燃速', liveActive: '活跃会话', liveBudget: '日预算 $', budgetSaved: '预算已保存 ✓',
     exportBtn: '⬆ 导出配置包', importBtn: '⬇ 导入配置包', importDone: '导入完成：新增 {c}，跳过 {s}',
     stSource: '数据来源：~/.claude/projects 会话记录实时统计（与 ccusage 同源，已按 message.id + requestId 去重）',
@@ -299,8 +303,8 @@ const I18N = {
     },
   },
   en: {
-    tabs: { commands: '/ Commands', skills: 'Skills', agents: 'Agents', plugins: 'Plugins', config: 'Config', workflows: 'Workflows', sessions: 'Sessions', stats: 'Stats' },
-    typeLabel: { commands: 'command', skills: 'skill', agents: 'agent', plugins: 'plugin', config: 'config', workflows: 'workflow', sessions: 'session', stats: 'stats' },
+    tabs: { commands: '/ Commands', skills: 'Skills', agents: 'Agents', plugins: 'Plugins', config: 'Config', workflows: 'Workflows', inspector: 'Inspector', sessions: 'Sessions', stats: 'Stats' },
+    typeLabel: { commands: 'command', skills: 'skill', agents: 'agent', plugins: 'plugin', config: 'config', workflows: 'workflow', inspector: 'request', sessions: 'session', stats: 'stats' },
     search: 'Search name / description…', mineOnly: 'Mine', all: 'All',
     newBtn: '＋ New', edit: 'Edit', save: 'Save', cancel: 'Cancel', del: 'Delete', uninstall: 'Uninstall', create: 'Create',
     noSelection: 'Nothing selected', emptyHint: '← Pick an item on the left, or click "New"',
@@ -331,6 +335,9 @@ const I18N = {
     searchSessionsPh: 'Filter titles; press Enter for full-text search…', srNone: 'No matching session content',
     replayBtn: '▶ Full replay', replayBack: '← Back to session', replayTruncated: '(long session, first 400 turns shown)',
     replayThinking: '💭 Thinking', replayInput: 'Input', replayResult: 'Result', replayTurnMeta: 'Turn took {s}s · {n} messages',
+    insEmpty: 'No traffic captured yet. Launch Claude Code with the command below and every API request will show up here:', insCopy: 'Copy command',
+    insSystem: '📜 System prompt', insThinking: '💭 Thinking (full)', insTools: '🧰 Tool definitions', insLastUser: 'Last user message',
+    insResponse: '💬 Response text', insUsage: 'Usage', insHint: 'Last 50 requests kept in memory only; sensitive headers (API keys) are never recorded',
     liveToday: 'Today', liveBurn: 'Burn rate', liveActive: 'Active sessions', liveBudget: 'Daily budget $', budgetSaved: 'Budget saved ✓',
     exportBtn: '⬆ Export bundle', importBtn: '⬇ Import bundle', importDone: 'Imported: {c} created, {s} skipped',
     stSource: 'Source: computed live from ~/.claude/projects transcripts (same source as ccusage, deduplicated by message.id + requestId)',
@@ -344,8 +351,8 @@ const I18N = {
     },
   },
   ja: {
-    tabs: { commands: '/ コマンド', skills: 'スキル', agents: 'エージェント', plugins: 'プラグイン', config: '設定', workflows: 'ワークフロー', sessions: 'セッション', stats: '統計' },
-    typeLabel: { commands: 'コマンド', skills: 'スキル', agents: 'エージェント', plugins: 'プラグイン', config: '設定', workflows: 'ワークフロー', sessions: 'セッション', stats: '統計' },
+    tabs: { commands: '/ コマンド', skills: 'スキル', agents: 'エージェント', plugins: 'プラグイン', config: '設定', workflows: 'ワークフロー', inspector: 'キャプチャ', sessions: 'セッション', stats: '統計' },
+    typeLabel: { commands: 'コマンド', skills: 'スキル', agents: 'エージェント', plugins: 'プラグイン', config: '設定', workflows: 'ワークフロー', inspector: 'リクエスト', sessions: 'セッション', stats: '統計' },
     search: '名前 / 説明を検索…', mineOnly: '自作のみ', all: 'すべて',
     newBtn: '＋ 新規', edit: '編集', save: '保存', cancel: 'キャンセル', del: '削除', uninstall: 'アンインストール', create: '作成',
     noSelection: '未選択', emptyHint: '← 左からアイテムを選択、または「新規」をクリック',
@@ -376,6 +383,9 @@ const I18N = {
     searchSessionsPh: 'タイトル検索；Enter で全文検索…', srNone: '一致するセッション内容がありません',
     replayBtn: '▶ フル再生', replayBack: '← セッション詳細に戻る', replayTruncated: '（長いセッションのため先頭400ターンのみ表示）',
     replayThinking: '💭 思考プロセス', replayInput: '入力', replayResult: '結果', replayTurnMeta: 'このターン {s} 秒 · {n} メッセージ',
+    insEmpty: 'まだトラフィックがありません。以下のコマンドで Claude Code を起動すると、全 API リクエストがここに表示されます：', insCopy: 'コマンドをコピー',
+    insSystem: '📜 システムプロンプト', insThinking: '💭 思考プロセス（完全）', insTools: '🧰 ツール定義', insLastUser: '最後のユーザーメッセージ',
+    insResponse: '💬 応答テキスト', insUsage: '使用量', insHint: '直近50リクエストのみメモリ保持。APIキー等の機密ヘッダーは記録されません',
     liveToday: '本日の費用', liveBurn: 'バーンレート', liveActive: 'アクティブ', liveBudget: '日予算 $', budgetSaved: '予算を保存しました ✓',
     exportBtn: '⬆ バンドルをエクスポート', importBtn: '⬇ バンドルをインポート', importDone: 'インポート完了：新規 {c}、スキップ {s}',
     stSource: 'データソース：~/.claude/projects のトランスクリプトからリアルタイム集計（ccusage と同一ソース、message.id + requestId で重複排除済み）',
@@ -402,6 +412,7 @@ const CAPS = {
   plugins:  { new: false, edit: false, del: true,  filter: false },
   config:   { new: false, edit: true,  del: false, filter: false },
   workflows: { new: true, edit: true, del: true, filter: false },
+  inspector: { new: false, edit: false, del: false, filter: false },
   sessions: { new: false, edit: false, del: false, filter: false },
   stats:    { new: false, edit: false, del: false, filter: false, dashboard: true },
 };
@@ -459,6 +470,7 @@ async function switchType(type) {
   $('#delBtn').textContent = type === 'plugins' ? t('uninstall') : t('del');
   showEmpty();
   if (CAPS[type].dashboard) { await renderStatsTab(); return; }
+  if (type === 'inspector') startInspectorPoll(); else stopInspectorPoll();
   const { items } = await api('GET', type);
   state.items = items;
   document.querySelector(`.tab[data-type="${type}"] .cnt`).textContent = items.filter(it => matchOrigin(it, type)).length;
@@ -516,6 +528,7 @@ function showEmpty() {
 async function openItem(key, displayName) {
   if (state.editing && !confirm(t('unsaved'))) return;
   state.editing = false;
+  if (state.type === 'inspector') return openInspect(key);
   try {
     const d = await api('GET', `${state.type}/${encodeURIComponent(key)}`);
     state.current = key;
@@ -754,7 +767,80 @@ $('#importFile').onchange = async e => {
   e.target.value = '';
 };
 
+// ---------- Inspector 抓包 ----------
+let _insTimer = null, _insProxyPort = 0;
+function startInspectorPoll() { stopInspectorPoll(); refreshInspector(); _insTimer = setInterval(refreshInspector, 2500); }
+function stopInspectorPoll() { if (_insTimer) { clearInterval(_insTimer); _insTimer = null; } }
+async function refreshInspector() {
+  if (state.type !== 'inspector') return stopInspectorPoll();
+  try {
+    const d = await api('GET', 'inspector');
+    _insProxyPort = d.proxyPort;
+    const changed = JSON.stringify(d.items.map(i => i.key)) !== JSON.stringify(state.items.map(i => i.key));
+    state.items = d.items;
+    document.querySelector('.tab[data-type="inspector"] .cnt').textContent = d.items.length;
+    if (changed && !state.current) renderList();
+    if (!d.items.length && !state.current) renderInspectorEmpty();
+  } catch {}
+}
+function renderInspectorEmpty() {
+  const cmd = `ANTHROPIC_BASE_URL=http://localhost:${_insProxyPort || 4322} claude`;
+  $('#empty').style.display = 'none';
+  $('#render').style.display = 'block';
+  $('#render').classList.remove('wide');
+  $('#render').innerHTML = `<div class="chart"><h3>🕵️ Inspector</h3>
+    <p style="color:var(--muted);font-size:13.5px;margin-bottom:12px">${esc(t('insEmpty'))}</p>
+    <pre style="background:var(--code-bg);border:1px solid var(--border);border-radius:10px;padding:14px;font-family:ui-monospace,monospace;font-size:13px">${esc(cmd)}</pre>
+    <div style="margin-top:12px"><button class="btn primary" id="insCopyBtn">${esc(t('insCopy'))}</button></div>
+    <p style="color:var(--muted);font-size:11.5px;margin-top:12px">${esc(t('insHint'))}</p></div>`;
+  const cb = $('#insCopyBtn');
+  if (cb) cb.onclick = () => { navigator.clipboard.writeText(cmd); toast('✓'); };
+}
+async function openInspect(key) {
+  try {
+    const r = await api('GET', 'inspector/' + encodeURIComponent(key));
+    state.current = key;
+    $('#empty').style.display = 'none';
+    $('#title').firstChild.textContent = (r.model || '?') + ' · ' + r.status;
+    $('#fpath').textContent = r.path + ' · ' + Math.round(r.durationMs / 1000) + 's';
+    $('#editBtn').disabled = $('#delBtn').disabled = true;
+    setEditMode(false);
+    $('#metabar').style.display = 'none';
+    const wrap = document.createElement('div');
+    wrap.style.maxWidth = '980px';
+    const sec = (title, body, mono, open) => {
+      const det = document.createElement('details'); det.open = !!open;
+      const sum = document.createElement('summary');
+      sum.textContent = title;
+      sum.style.cssText = 'cursor:pointer;font-weight:700;font-size:14px;padding:10px 0;color:var(--accent2)';
+      det.appendChild(sum);
+      const pre = document.createElement('pre');
+      pre.style.cssText = 'background:var(--code-bg);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:60vh;overflow:auto' + (mono ? '' : ';font-family:inherit');
+      pre.textContent = body;
+      det.appendChild(pre);
+      return det;
+    };
+    if (r.usage) {
+      const u = r.usage;
+      const meta = document.createElement('div');
+      meta.style.cssText = 'display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin-bottom:14px;font-family:ui-monospace,monospace';
+      meta.textContent = `${t('insUsage')}: in ${(u.input_tokens||0).toLocaleString()} · out ${(u.output_tokens||0).toLocaleString()} · cache-r ${(u.cache_read_input_tokens||0).toLocaleString()} · cache-w ${(u.cache_creation_input_tokens||0).toLocaleString()}`;
+      wrap.appendChild(meta);
+    }
+    if (r.thinking) wrap.appendChild(sec(t('insThinking'), r.thinking, false, true));
+    if (r.outText) wrap.appendChild(sec(t('insResponse'), r.outText, false, !r.thinking));
+    if (r.lastUser) wrap.appendChild(sec(t('insLastUser'), r.lastUser, false, false));
+    if (r.system) wrap.appendChild(sec(t('insSystem') + ' (' + (r.system.length/1000).toFixed(1) + 'k chars)', r.system, true, false));
+    if (r.tools && r.tools.length) wrap.appendChild(sec(t('insTools') + ' (' + r.tools.length + ')', r.tools.join('\n'), true, false));
+    $('#render').style.display = 'block';
+    $('#render').classList.add('wide');
+    $('#render').innerHTML = '';
+    $('#render').appendChild(wrap);
+    renderList();
+  } catch (e) { toast(t('loadFail') + e.message, false); }
+}
 // ---------- Live 实时监控 ----------
+
 let liveES = null;
 function connectLive() {
   disconnectLive();
