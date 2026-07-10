@@ -58,6 +58,9 @@ const STRINGS = {
     sesTranscript: '完整记录', sesNoTranscript: '（记录文件不存在）',
     sesResume: '恢复此会话', sesPrompts: '提示词历史',
     cfgProjMdDesc: '项目级指令文件', cfgProjSettingsDesc: '项目级设置', cfgMemoryDesc: '项目记忆文件（~/.claude/projects/.../memory）',
+    errQueryShort: '搜索词至少 2 个字符', errBadBundle: '不是有效的 claude-panel 配置包',
+    budgetNotify: '今日 Claude Code 已花费 ${cost}，超出预算 ${budget}！', cfgMergedName: '🧩 CLAUDE.md 合并视图',
+    cfgMergedDesc: 'Claude 实际看到的全部指令（全局 + 项目各层合并）', cfgMergedPath: '(虚拟视图，只读)', cfgMergedEmpty: '没有找到任何 CLAUDE.md 文件',
   },
   en: {
     errInvalidName: 'Invalid name (only letters, digits, - _ . allowed)',
@@ -89,6 +92,9 @@ const STRINGS = {
     sesTranscript: 'Transcript', sesNoTranscript: '(transcript file missing)',
     sesResume: 'Resume this session', sesPrompts: 'Prompt history',
     cfgProjMdDesc: 'Project-level instructions', cfgProjSettingsDesc: 'Project-level settings', cfgMemoryDesc: 'Project memory file (~/.claude/projects/.../memory)',
+    errQueryShort: 'Query must be at least 2 characters', errBadBundle: 'Not a valid claude-panel bundle',
+    budgetNotify: 'Claude Code spent ${cost} today, over your ${budget} budget!', cfgMergedName: '🧩 CLAUDE.md merged view',
+    cfgMergedDesc: 'Everything Claude actually sees (global + project layers merged)', cfgMergedPath: '(virtual view, read-only)', cfgMergedEmpty: 'No CLAUDE.md files found',
   },
   ja: {
     errInvalidName: '名前が無効です（英数字と - _ . のみ使用可能）',
@@ -120,6 +126,9 @@ const STRINGS = {
     sesTranscript: 'トランスクリプト', sesNoTranscript: '（記録ファイルなし）',
     sesResume: 'このセッションを再開', sesPrompts: 'プロンプト履歴',
     cfgProjMdDesc: 'プロジェクトレベルの指示ファイル', cfgProjSettingsDesc: 'プロジェクトレベルの設定', cfgMemoryDesc: 'プロジェクトメモリファイル（~/.claude/projects/.../memory）',
+    errQueryShort: '検索語は2文字以上必要です', errBadBundle: '有効な claude-panel バンドルではありません',
+    budgetNotify: '本日 Claude Code で ${cost} 使用、予算 ${budget} を超過！', cfgMergedName: '🧩 CLAUDE.md 統合ビュー',
+    cfgMergedDesc: 'Claude が実際に見る全指示（グローバル + プロジェクト各層を統合）', cfgMergedPath: '（仮想ビュー、読み取り専用）', cfgMergedEmpty: 'CLAUDE.md ファイルが見つかりません',
   },
 };
 const SUPPORTED_LANGS = Object.keys(STRINGS);
@@ -382,7 +391,7 @@ function localDay(ts) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-const PARSE_VERSION = 2; // 解析结构变更时 +1，旧缓存自动重建
+const PARSE_VERSION = 3; // 解析结构变更时 +1，旧缓存自动重建
 function parseTranscript(fp) {
   const out = { v: PARSE_VERSION, records: [], userMsgs: 0, userByDay: {}, hourCounts: {}, firstTs: null, toolUses: [] };
   let content;
@@ -428,6 +437,7 @@ function parseTranscript(fp) {
       model: m.model,
       day: ts ? localDay(ts) : null,
       hour: ts ? new Date(ts).getHours() : null,
+      ms: ts ? new Date(ts).getTime() : 0,
       in: u.input_tokens || 0, out: u.output_tokens || 0,
       cr: u.cache_read_input_tokens || 0, cc: u.cache_creation_input_tokens || 0, c1,
     });
@@ -464,6 +474,7 @@ function costOf(model, v) {
   return (v.in * p.i + v.out * p.o + (v.cc - v.c1) * p.i * 1.25 + v.c1 * p.i * 2 + v.cr * p.i * 0.1) / 1e6;
 }
 const shortModel = m => m.replace(/^claude-/, '').replace(/-\d{8}$/, '');
+const fmtK = n => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n);
 
 // 递归收集全部 .jsonl（会话目录下还有 subagent 子目录，ccusage 也会统计它们）
 function transcriptFiles() {
@@ -584,6 +595,191 @@ function wrappedStats(days) {
     peakHour: peakHour ? Number(peakHour[0]) : null,
     lateNightMessages: lateNight,
   };
+}
+
+// ---------- 全局搜索 ----------
+function extractText(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) return content.map(b => (b && b.type === 'text') ? b.text : '').join(' ');
+  return '';
+}
+
+function searchTranscripts(q) {
+  const ql = q.toLowerCase();
+  const out = [];
+  const { files, sessionFiles } = transcriptFiles();
+  for (const fp of files) {
+    if (!sessionFiles.has(fp)) continue; // 只搜主会话，跳过 subagent 记录
+    let content;
+    try { content = fs.readFileSync(fp, 'utf8'); } catch { continue; }
+    if (!content.toLowerCase().includes(ql)) continue;
+    const sid = path.basename(fp, '.jsonl');
+    for (const line of content.split('\n')) {
+      if (!line.toLowerCase().includes(ql)) continue;
+      const isU = line.includes('"type":"user"');
+      const isA = !isU && line.includes('"type":"assistant"');
+      if (!isU && !isA) continue;
+      let d;
+      try { d = JSON.parse(line); } catch { continue; }
+      if (d.isSidechain) continue;
+      const text = extractText(d.message && d.message.content);
+      const idx = text.toLowerCase().indexOf(ql);
+      if (idx < 0) continue;
+      out.push({
+        session: sid,
+        role: isU ? 'user' : 'assistant',
+        ts: d.timestamp || '',
+        project: d.cwd || '',
+        snippet: text.slice(Math.max(0, idx - 60), idx + q.length + 120).replace(/\s+/g, ' ').trim(),
+      });
+      if (out.length >= 200) break;
+    }
+    if (out.length >= 200) break;
+  }
+  out.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+  return out.slice(0, 80);
+}
+
+// ---------- 会话回放 ----------
+function sessionReplay(id) {
+  const prompts = readHistory().filter(e => e.sessionId === id);
+  const project = prompts[0] && prompts[0].project;
+  if (!project) return null;
+  const fp = path.join(CLAUDE_DIR, 'projects', encodeProject(project), id + '.jsonl');
+  if (!fs.existsSync(fp)) return null;
+  const byMsgId = new Map(); // 流式重复行：同 message.id 保留最后一行
+  const turns = [];
+  for (const line of fs.readFileSync(fp, 'utf8').split('\n')) {
+    if (!line) continue;
+    const isU = line.includes('"type":"user"');
+    const isA = !isU && line.includes('"type":"assistant"');
+    if (!isU && !isA) continue;
+    let d;
+    try { d = JSON.parse(line); } catch { continue; }
+    if (d.isSidechain) continue;
+    const m = d.message;
+    if (!m) continue;
+    if (isU) {
+      const text = extractText(m.content);
+      if (!text.trim()) continue; // 跳过纯 tool_result 消息
+      turns.push({ role: 'user', ts: d.timestamp || '', text: text.slice(0, 4000) });
+    } else {
+      const text = extractText(m.content);
+      const tools = Array.isArray(m.content)
+        ? m.content.filter(b => b && b.type === 'tool_use').map(b => ({
+            name: b.name, input: JSON.stringify(b.input || {}).slice(0, 400),
+          }))
+        : [];
+      if (!text.trim() && !tools.length) continue;
+      const turn = { role: 'assistant', ts: d.timestamp || '', text: text.slice(0, 6000), tools, model: m.model || '' };
+      if (m.id) {
+        const prev = byMsgId.get(m.id);
+        if (prev) { Object.assign(prev, turn); continue; } // 覆盖为最终内容
+        byMsgId.set(m.id, turn);
+      }
+      turns.push(turn);
+    }
+  }
+  const truncated = turns.length > 400;
+  return { id, project, turns: turns.slice(0, 400), truncated };
+}
+
+// ---------- Live 快照 / 面板配置（预算） ----------
+const PANEL_CONFIG = path.join(CLAUDE_DIR, 'panel-config.json');
+function readPanelConfig() {
+  try { return JSON.parse(fs.readFileSync(PANEL_CONFIG, 'utf8')); } catch { return {}; }
+}
+function writePanelConfig(cfg) {
+  fs.writeFileSync(PANEL_CONFIG, JSON.stringify(cfg, null, 2), 'utf8');
+}
+
+let _budgetNotifiedDay = '';
+function liveSnapshot(lang) {
+  const today = localDay(new Date());
+  const now = Date.now();
+  const seen = new Set();
+  let todayCost = 0, todayTokens = 0, todayMsgs = 0, burn10 = 0;
+  let activeSessions = 0;
+  for (const fp of transcriptFiles().files) {
+    const entry = _usageCache.get(fp);
+    const p = parsedFor(fp);
+    if (!p) continue;
+    if (entry && now - entry.mtimeMs < 2 * 60e3) activeSessions++;
+    for (const r of p.records) {
+      if (r.day !== today) continue;
+      if (r.key !== '|') { if (seen.has(r.key)) continue; seen.add(r.key); }
+      todayMsgs++;
+      todayTokens += r.in + r.out + r.cc + r.cr;
+      const c = costOf(r.model, { in: r.in, out: r.out, cc: r.cc, c1: r.c1, cr: r.cr }) || 0;
+      todayCost += c;
+      if (r.ms && now - r.ms < 10 * 60e3) burn10 += c;
+    }
+  }
+  const cfg = readPanelConfig();
+  const budget = Number(cfg.dailyBudget) || 0;
+  const overBudget = budget > 0 && todayCost > budget;
+  // 超预算通知：macOS 每天最多提醒一次
+  if (overBudget && _budgetNotifiedDay !== today && process.platform === 'darwin') {
+    _budgetNotifiedDay = today;
+    const msg = T(lang, 'budgetNotify').replace('{cost}', todayCost.toFixed(2)).replace('{budget}', String(budget));
+    try {
+      require('child_process').execFile('osascript', ['-e',
+        `display notification ${JSON.stringify(msg)} with title "Claude Panel" sound name "Sosumi"`]);
+    } catch {}
+  }
+  return {
+    today, cost: Math.round(todayCost * 100) / 100, tokens: todayTokens, messages: todayMsgs,
+    burnPerHour: Math.round(burn10 * 6 * 100) / 100, // 近10分钟折算每小时
+    activeSessions, budget, overBudget,
+  };
+}
+
+// ---------- CLAUDE.md 合并视图 ----------
+function mergedClaudeMd(lang, scope) {
+  const cands = [
+    [path.join(os.homedir(), 'CLAUDE.md'), '~/CLAUDE.md'],
+    [path.join(CLAUDE_DIR, 'CLAUDE.md'), '~/.claude/CLAUDE.md'],
+  ];
+  if (scope) {
+    cands.push([path.join(scope, 'CLAUDE.md'), path.join(scope, 'CLAUDE.md')]);
+    cands.push([path.join(scope, '.claude', 'CLAUDE.md'), path.join(scope, '.claude', 'CLAUDE.md')]);
+  }
+  const parts = [];
+  for (const [fp, label] of cands) {
+    if (!fs.existsSync(fp)) continue;
+    parts.push(`## 📄 ${label}\n\n${fs.readFileSync(fp, 'utf8').trim()}`);
+  }
+  return `# ${T(lang, 'cfgMergedName')}\n\n> ${T(lang, 'cfgMergedDesc')}\n\n` +
+    (parts.join('\n\n---\n\n') || `*${T(lang, 'cfgMergedEmpty')}*`);
+}
+
+// ---------- 配置包导出 / 导入 ----------
+function exportBundle() {
+  const bundle = { format: 'claude-panel-bundle', version: 1, exportedAt: new Date().toISOString() };
+  for (const type of Object.keys(TYPES)) {
+    bundle[type] = {};
+    for (const it of listItems(type)) {
+      if (it.origin !== 'user') continue; // 只导出自建的
+      const fp = filePathOf(type, it.name);
+      try { bundle[type][it.name] = fs.readFileSync(fp, 'utf8'); } catch {}
+    }
+  }
+  return bundle;
+}
+
+function importBundle(bundle) {
+  const created = [], skipped = [], invalid = [];
+  for (const type of Object.keys(TYPES)) {
+    for (const [name, content] of Object.entries(bundle[type] || {})) {
+      if (typeof content !== 'string' || !safeName(name)) { invalid.push(`${type}/${name}`); continue; }
+      const fp = filePathOf(type, name);
+      if (fs.existsSync(fp)) { skipped.push(`${type}/${name}`); continue; }
+      fs.mkdirSync(path.dirname(fp), { recursive: true });
+      fs.writeFileSync(fp, content, 'utf8');
+      created.push(`${type}/${name}`);
+    }
+  }
+  return { created, skipped, invalid };
 }
 
 function readStats() {
@@ -857,6 +1053,66 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, wrappedStats(days));
     }
 
+    // ---- 全局搜索 ----
+    if (type === 'search' && req.method === 'GET') {
+      const q = (url.searchParams.get('q') || '').trim();
+      if (q.length < 2) return sendJSON(res, 400, { error: T(lang, 'errQueryShort') });
+      return sendJSON(res, 200, { q, results: searchTranscripts(q) });
+    }
+
+    // ---- Statusline：终端状态栏一行文本 ----
+    if (type === 'statusline' && req.method === 'GET') {
+      const w = wrappedStats(1);
+      const line = `$${w.cost.toFixed(2)} today · ${fmtK(w.tokens)} tok${w.topModel ? ' · ' + w.topModel.name : ''}`;
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end(line);
+    }
+
+    // ---- Live（SSE，3 秒推送一次今日快照） ----
+    if (type === 'live' && req.method === 'GET') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      });
+      const push = () => {
+        try { res.write(`data: ${JSON.stringify(liveSnapshot(lang))}\n\n`); } catch {}
+      };
+      push();
+      const timer = setInterval(push, 3000);
+      req.on('close', () => clearInterval(timer));
+      return;
+    }
+
+    // ---- 面板配置（预算等） ----
+    if (type === 'panel-config') {
+      if (req.method === 'GET') return sendJSON(res, 200, readPanelConfig());
+      if (req.method === 'PUT') {
+        let cfg;
+        try { cfg = JSON.parse(await readBody(req) || '{}'); } catch (e) { return sendJSON(res, 400, { error: T(lang, 'errJson') + e.message }); }
+        writePanelConfig({ ...readPanelConfig(), ...cfg });
+        _budgetNotifiedDay = ''; // 改预算后重置当日提醒
+        return sendJSON(res, 200, { ok: true });
+      }
+      return sendJSON(res, 405, { error: 'method not allowed' });
+    }
+
+    // ---- 配置包导出 / 导入 ----
+    if (type === 'export' && req.method === 'GET') {
+      const bundle = exportBundle();
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="claude-panel-bundle.json"',
+      });
+      return res.end(JSON.stringify(bundle, null, 2));
+    }
+    if (type === 'import' && req.method === 'POST') {
+      let bundle;
+      try { bundle = JSON.parse(await readBody(req) || '{}'); } catch (e) { return sendJSON(res, 400, { error: T(lang, 'errJson') + e.message }); }
+      if (bundle.format !== 'claude-panel-bundle') return sendJSON(res, 400, { error: T(lang, 'errBadBundle') });
+      return sendJSON(res, 200, importBundle(bundle));
+    }
+
     // ---- 会话历史 ----
     if (type === 'sessions') {
       if (req.method === 'GET' && parts.length === 2) {
@@ -867,6 +1123,10 @@ const server = http.createServer(async (req, res) => {
           origin: 'user',
         }));
         return sendJSON(res, 200, { items });
+      }
+      if (req.method === 'GET' && parts.length === 4 && parts[3] === 'replay') {
+        const r = sessionReplay(decodeURIComponent(parts[2]));
+        return r ? sendJSON(res, 200, r) : sendJSON(res, 404, { error: T(lang, 'errNotFound') });
       }
       if (req.method === 'GET' && parts.length === 3) {
         const d = sessionDetail(decodeURIComponent(parts[2]), lang);
@@ -897,8 +1157,16 @@ const server = http.createServer(async (req, res) => {
     if (type === 'config') {
       const files = configFiles(lang, scope);
       if (req.method === 'GET' && parts.length === 2) {
+        const items = [{ name: T(lang, 'cfgMergedName'), key: 'merged', description: T(lang, 'cfgMergedDesc'), origin: 'user' }]
+          .concat(files.map(f => ({ name: f.name, key: f.key, description: f.desc, origin: 'user' })));
+        return sendJSON(res, 200, { items });
+      }
+      // 合并视图：虚拟只读文件
+      if (decodeURIComponent(parts[2] || '') === 'merged') {
+        if (req.method !== 'GET') return sendJSON(res, 403, { error: T(lang, 'errConfigOp') });
         return sendJSON(res, 200, {
-          items: files.map(f => ({ name: f.name, key: f.key, description: f.desc, origin: 'user' })),
+          name: T(lang, 'cfgMergedName'), path: T(lang, 'cfgMergedPath'), meta: {},
+          content: mergedClaudeMd(lang, scope), origin: 'installed', config: true,
         });
       }
       const file = files.find(f => f.key === decodeURIComponent(parts[2] || ''));

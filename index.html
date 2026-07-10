@@ -44,6 +44,32 @@
   .rangebtn.active { color: var(--text); border-color: var(--accent); background: rgba(217,123,79,.12); }
   #tip { position: fixed; display: none; background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 8px; font-size: 12px; pointer-events: none; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,.5); white-space: nowrap; font-family: ui-monospace, monospace; }
 
+  /* ---------- Live 实时条 ---------- */
+  #liveBar { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; font-size: 13px; }
+  #liveBar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+  #liveBar b { font-size: 17px; font-family: ui-monospace, monospace; }
+  #liveBar .lv { color: var(--muted); }
+  #liveBar.over { border-color: var(--danger); }
+  #liveBar.over b.cost { color: var(--danger); }
+  #liveBar input { width: 76px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font-size: 12px; outline: none; }
+
+  /* ---------- 会话回放 ---------- */
+  .bubble { max-width: 78%; margin: 10px 0; padding: 10px 14px; border-radius: 14px; font-size: 13.5px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+  .bubble.user { margin-left: auto; background: rgba(217,123,79,.16); border: 1px solid rgba(217,123,79,.35); border-bottom-right-radius: 4px; }
+  .bubble.assistant { margin-right: auto; background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .bubble .bts { font-size: 10.5px; color: var(--muted); margin-bottom: 4px; font-family: ui-monospace, monospace; }
+  .bubble details { margin-top: 6px; font-size: 12px; }
+  .bubble details summary { cursor: pointer; color: var(--accent2); font-family: ui-monospace, monospace; }
+  .bubble details pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-top: 6px; overflow-x: auto; font-size: 11.5px; white-space: pre-wrap; }
+  #replayWrap { max-width: 920px; display: flex; flex-direction: column; }
+
+  /* ---------- 搜索结果 / 侧栏底部按钮 ---------- */
+  .sr-role { font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-right: 6px; border: 1px solid var(--border); color: var(--muted); }
+  #footerBtns { display: none; gap: 8px; margin: 8px 12px 14px; }
+  #footerBtns button { flex: 1; padding: 8px; border-radius: 8px; border: 1px dashed var(--border); background: none; color: var(--accent2); font-size: 12.5px; cursor: pointer; }
+  #footerBtns button:hover { border-color: var(--accent); }
+
   /* ---------- Wrapped 分享卡片 ---------- */
   #wmodal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 60; align-items: center; justify-content: center; }
   #wmodal .wbox { display: flex; flex-direction: column; gap: 12px; max-height: 94vh; }
@@ -158,6 +184,11 @@
   </div>
   <div id="list"></div>
   <button id="newbtn">＋ 新建</button>
+  <div id="footerBtns">
+    <button id="exportBtn"></button>
+    <button id="importBtn"></button>
+  </div>
+  <input type="file" id="importFile" accept=".json" style="display:none">
 </div>
 
 <div id="main">
@@ -248,6 +279,10 @@ const I18N = {
     wDays: '活跃天数', wTopCmd: '最常用命令', wTopModel: '本命模型', wPeak: '高能时段', wStreak: '最长连续',
     wDaysUnit: '天', wDownload: '下载 PNG', wR7: '过去 7 天', wR30: '过去 30 天',
     bNight: '🦉 深夜码农', bBurner: '🔥 Token 燃烧机', bStreak: '⚡ 连肝选手', bShip: '🚀 稳定输出',
+    searchSessionsPh: '搜标题；回车全文搜索会话内容…', srNone: '没有找到匹配的会话内容',
+    replayBtn: '▶ 完整回放', replayBack: '← 返回会话详情', replayTruncated: '（会话过长，仅显示前 400 轮）',
+    liveToday: '今日花费', liveBurn: '燃速', liveActive: '活跃会话', liveBudget: '日预算 $', budgetSaved: '预算已保存 ✓',
+    exportBtn: '⬆ 导出配置包', importBtn: '⬇ 导入配置包', importDone: '导入完成：新增 {c}，跳过 {s}',
     stSource: '数据来源：~/.claude/projects 会话记录实时统计（与 ccusage 同源，已按 message.id + requestId 去重）',
     stTable: '每日用量明细（ccusage daily）', thDate: '日期', thModels: '模型', totalRow: '合计',
     stCostNote: '* 费用按官方定价估算（Opus $5/$25、Fable $10/$50、Haiku $1/$5、Sonnet $3/$15 每百万 token，含 5m/1h 缓存价差），已与 ccusage 逐日校验一致；带 * 的行含未知定价模型',
@@ -288,6 +323,10 @@ const I18N = {
     wDays: 'active days', wTopCmd: 'Top command', wTopModel: 'Favorite model', wPeak: 'Peak hours', wStreak: 'Longest streak',
     wDaysUnit: 'days', wDownload: 'Download PNG', wR7: 'Last 7 days', wR30: 'Last 30 days',
     bNight: '🦉 Night Owl', bBurner: '🔥 Token Burner', bStreak: '⚡ On a Streak', bShip: '🚀 Steady Shipper',
+    searchSessionsPh: 'Filter titles; press Enter for full-text search…', srNone: 'No matching session content',
+    replayBtn: '▶ Full replay', replayBack: '← Back to session', replayTruncated: '(long session, first 400 turns shown)',
+    liveToday: 'Today', liveBurn: 'Burn rate', liveActive: 'Active sessions', liveBudget: 'Daily budget $', budgetSaved: 'Budget saved ✓',
+    exportBtn: '⬆ Export bundle', importBtn: '⬇ Import bundle', importDone: 'Imported: {c} created, {s} skipped',
     stSource: 'Source: computed live from ~/.claude/projects transcripts (same source as ccusage, deduplicated by message.id + requestId)',
     stTable: 'Daily usage (ccusage daily)', thDate: 'Date', thModels: 'Models', totalRow: 'Total',
     stCostNote: '* Cost estimated from official pricing (Opus $5/$25, Fable $10/$50, Haiku $1/$5, Sonnet $3/$15 per M tokens, incl. 5m/1h cache tiers), validated day-by-day against ccusage; rows marked * contain models with unknown pricing',
@@ -328,6 +367,10 @@ const I18N = {
     wDays: 'アクティブ日数', wTopCmd: '最頻コマンド', wTopModel: '推しモデル', wPeak: 'ピーク時間帯', wStreak: '最長連続',
     wDaysUnit: '日', wDownload: 'PNG をダウンロード', wR7: '過去7日間', wR30: '過去30日間',
     bNight: '🦉 夜型エンジニア', bBurner: '🔥 トークンバーナー', bStreak: '⚡ 連続作業の達人', bShip: '🚀 安定稼働',
+    searchSessionsPh: 'タイトル検索；Enter で全文検索…', srNone: '一致するセッション内容がありません',
+    replayBtn: '▶ フル再生', replayBack: '← セッション詳細に戻る', replayTruncated: '（長いセッションのため先頭400ターンのみ表示）',
+    liveToday: '本日の費用', liveBurn: 'バーンレート', liveActive: 'アクティブ', liveBudget: '日予算 $', budgetSaved: '予算を保存しました ✓',
+    exportBtn: '⬆ バンドルをエクスポート', importBtn: '⬇ バンドルをインポート', importDone: 'インポート完了：新規 {c}、スキップ {s}',
     stSource: 'データソース：~/.claude/projects のトランスクリプトからリアルタイム集計（ccusage と同一ソース、message.id + requestId で重複排除済み）',
     stTable: '日別使用量明細（ccusage daily）', thDate: '日付', thModels: 'モデル', totalRow: '合計',
     stCostNote: '* 費用は公式価格から推定（Opus $5/$25、Fable $10/$50、Haiku $1/$5、Sonnet $3/$15 / 100万トークン、5m/1h キャッシュ価格差込み）。ccusage と日次で検証済み。* 付きの行は価格不明のモデルを含みます',
@@ -398,8 +441,11 @@ async function loadCounts() {
 }
 
 async function switchType(type) {
+  disconnectLive();
   state.type = type; state.current = null; state.editing = false; state.keyword = '';
   $('#search').value = '';
+  $('#search').placeholder = type === 'sessions' ? t('searchSessionsPh') : t('search');
+  $('#footerBtns').style.display = type === 'config' ? 'flex' : 'none';
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.type === type));
   $('#newbtn').style.display = CAPS[type].new ? 'block' : 'none';
   $('#filterbar').style.display = CAPS[type].filter ? 'flex' : 'none';
@@ -481,11 +527,20 @@ async function openItem(key, displayName) {
     $('#delBtn').disabled = !caps.del || readonlyCmd;
     setEditMode(false);
     renderDoc(d);
+    if (state.type === 'sessions' && d.session) {
+      const rb = document.createElement('button');
+      rb.className = 'btn primary';
+      rb.style.margin = '0 0 16px';
+      rb.textContent = t('replayBtn');
+      rb.onclick = () => loadReplay(key);
+      $('#render').prepend(rb);
+    }
     renderList();
   } catch (e) { toast(t('loadFail') + e.message, false); }
 }
 
 function renderDoc(d) {
+  $('#render').classList.remove('wide');
   const metabar = $('#metabar');
   const keys = Object.keys(d.meta || {});
   if (keys.length) {
@@ -578,6 +633,118 @@ async function createItem() {
 $('#newName').addEventListener('keydown', e => { if (e.key === 'Enter') createItem(); });
 
 $('#search').addEventListener('input', e => { state.keyword = e.target.value; renderList(); });
+$('#search').addEventListener('keydown', async e => {
+  if (e.key !== 'Enter' || state.type !== 'sessions') return;
+  const q = e.target.value.trim();
+  if (q.length < 2) return;
+  try {
+    const { results } = await api('GET', 'search?q=' + encodeURIComponent(q));
+    renderSearchResults(results);
+  } catch (err) { toast(t('loadFail') + err.message, false); }
+});
+
+function renderSearchResults(results) {
+  const list = $('#list');
+  list.innerHTML = '';
+  if (!results.length) {
+    list.innerHTML = `<div style="color:var(--muted);padding:12px;font-size:12.5px">${esc(t('srNone'))}</div>`;
+    return;
+  }
+  for (const r of results) {
+    const div = document.createElement('div');
+    div.className = 'item';
+    const nm = document.createElement('div'); nm.className = 'nm';
+    const role = document.createElement('span'); role.className = 'sr-role';
+    role.textContent = r.role === 'user' ? 'Q' : 'A';
+    nm.appendChild(role);
+    nm.appendChild(document.createTextNode(
+      (r.ts || '').slice(0, 10) + (r.project ? ' · ' + r.project.split('/').pop() : '')));
+    const ds = document.createElement('div'); ds.className = 'ds';
+    ds.textContent = r.snippet;
+    div.append(nm, ds);
+    div.onclick = () => openItem(r.session);
+    list.appendChild(div);
+  }
+}
+
+// ---------- 会话回放 ----------
+async function loadReplay(id) {
+  try {
+    const r = await api('GET', `sessions/${encodeURIComponent(id)}/replay`);
+    const wrap = document.createElement('div');
+    wrap.id = 'replayWrap';
+    const back = document.createElement('button');
+    back.className = 'btn'; back.style.cssText = 'margin-bottom:14px;align-self:flex-start';
+    back.textContent = t('replayBack');
+    back.onclick = () => openItem(id);
+    wrap.appendChild(back);
+    for (const turn of r.turns) {
+      const b = document.createElement('div');
+      b.className = 'bubble ' + turn.role;
+      const ts = document.createElement('div'); ts.className = 'bts';
+      ts.textContent = (turn.ts || '').replace('T', ' ').slice(0, 16) + (turn.model ? ' · ' + turn.model : '');
+      b.appendChild(ts);
+      if (turn.text) b.appendChild(document.createTextNode(turn.text));
+      for (const tool of (turn.tools || [])) {
+        const det = document.createElement('details');
+        const sum = document.createElement('summary'); sum.textContent = '🔧 ' + tool.name;
+        const pre = document.createElement('pre'); pre.textContent = tool.input;
+        det.append(sum, pre);
+        b.appendChild(det);
+      }
+      wrap.appendChild(b);
+    }
+    if (r.truncated) {
+      const n = document.createElement('div');
+      n.style.cssText = 'color:var(--muted);font-size:12px;margin:10px 0';
+      n.textContent = t('replayTruncated');
+      wrap.appendChild(n);
+    }
+    $('#metabar').style.display = 'none';
+    $('#render').innerHTML = '';
+    $('#render').classList.add('wide');
+    $('#render').appendChild(wrap);
+  } catch (e) { toast(t('loadFail') + e.message, false); }
+}
+
+// ---------- 导出 / 导入 ----------
+$('#exportBtn').onclick = () => { location.href = '/api/export'; };
+$('#importBtn').onclick = () => $('#importFile').click();
+$('#importFile').onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try {
+    const bundle = JSON.parse(await f.text());
+    const r = await api('POST', 'import', bundle);
+    toast(fmt(t('importDone'), { c: r.created.length, s: r.skipped.length }));
+    await switchType(state.type);
+    loadCounts();
+  } catch (err) { toast(t('loadFail') + err.message, false); }
+  e.target.value = '';
+};
+
+// ---------- Live 实时监控 ----------
+let liveES = null;
+function connectLive() {
+  disconnectLive();
+  liveES = new EventSource('/api/live?lang=' + lang);
+  liveES.onmessage = e => {
+    let d;
+    try { d = JSON.parse(e.data); } catch { return; }
+    const bar = $('#liveBar');
+    if (!bar) return;
+    bar.classList.toggle('over', !!d.overBudget);
+    $('#lvCost').textContent = '$' + d.cost.toFixed(2);
+    $('#lvBurn').textContent = '$' + d.burnPerHour.toFixed(2) + '/h';
+    $('#lvAct').textContent = String(d.activeSessions);
+    const bi = $('#lvBudget');
+    if (bi && document.activeElement !== bi && !bi.dataset.set) {
+      bi.value = d.budget || '';
+      bi.dataset.set = '1';
+    }
+  };
+}
+function disconnectLive() { if (liveES) { liveES.close(); liveES = null; } }
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchType(t.dataset.type));
 document.querySelectorAll('.fbtn').forEach(b => b.onclick = () => {
   state.origin = b.dataset.origin;
@@ -731,6 +898,14 @@ function renderStatsNow() {
   });
   const wb = $('#wrappedBtn');
   if (wb) wb.onclick = () => openWrapped(wrappedDays);
+  connectLive();
+  const bi = $('#lvBudget');
+  if (bi) bi.onchange = async () => {
+    try {
+      await api('PUT', 'panel-config', { dailyBudget: Number(bi.value) || 0 });
+      toast(t('budgetSaved'));
+    } catch (e) { toast(t('saveFail') + e.message, false); }
+  };
 }
 
 // ---------- Wrapped 分享卡片 ----------
@@ -867,6 +1042,12 @@ function drawWrapped(d) {
 
 function statsHTML(d) {
   let h = '';
+  // Live 实时条
+  h += `<div id="liveBar"><span class="dot"></span>
+    <span><span class="lv">${esc(t('liveToday'))}</span> <b class="cost" id="lvCost">—</b></span>
+    <span><span class="lv">${esc(t('liveBurn'))}</span> <b id="lvBurn">—</b></span>
+    <span><span class="lv">${esc(t('liveActive'))}</span> <b id="lvAct">—</b></span>
+    <span style="margin-left:auto"><span class="lv">${esc(t('liveBudget'))}</span> <input id="lvBudget" type="number" min="0" step="1"></span></div>`;
   // 概览卡片
   const days = d.dailyActivity || [];
   const cards = [
@@ -985,6 +1166,9 @@ function applyLang() {
   document.querySelector('.fbtn[data-origin="user"]').textContent = t('mineOnly');
   document.querySelector('.fbtn[data-origin="all"]').textContent = t('all');
   $('#newbtn').textContent = t('newBtn');
+  $('#exportBtn').textContent = t('exportBtn');
+  $('#importBtn').textContent = t('importBtn');
+  $('#search').placeholder = state.type === 'sessions' ? t('searchSessionsPh') : t('search');
   $('#editBtn').textContent = t('edit');
   $('#saveBtn').textContent = t('save');
   $('#cancelBtn').textContent = t('cancel');

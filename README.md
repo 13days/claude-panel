@@ -34,6 +34,11 @@ Claude Code stores your customizations as loose files scattered across `~/.claud
 | **Config** | `CLAUDE.md`, `settings.json`, keybindings — edited in place, with JSON validation before save so you can't brick your setup |
 | **Sessions** | Your last 200 sessions grouped from `history.jsonl`: prompt history, time range, and a copy-paste `claude --resume` command |
 | **Stats** | Live usage dashboard: daily messages, per-model tokens, 24h activity heatline, and a `ccusage daily`-style cost table — all computed from transcripts on the fly |
+| **🔴 Live monitor** | Real-time SSE ticker on the Stats page: today's spend, burn rate ($/h over the last 10 min), active sessions — plus a daily budget with macOS notifications when you blow through it |
+| **🔍 Full-text search** | Press Enter in the Sessions tab to search across every transcript — find that conversation from three weeks ago by any word you or Claude said |
+| **▶ Session replay** | Full chat-style replay of any session: bubbles, timestamps, models, and collapsible tool calls |
+| **🎁 Wrapped** | One-click shareable PNG stats card (week/month/all-time) with spend, tokens, top command, favorite model and an earned badge |
+| **📦 Export / Import** | Bundle your commands/skills/agents/workflows into one JSON and share it with your team — import skips existing files |
 
 Plus the cross-cutting stuff:
 
@@ -66,6 +71,16 @@ Environment variables:
 |---|---|---|
 | `PORT` | `4321` | HTTP port |
 | `CLAUDE_DIR` | `~/.claude` | The Claude Code directory to manage |
+
+### Terminal statusline integration
+
+Show today's spend at the bottom of your Claude Code terminal. In `~/.claude/settings.json`:
+
+```json
+{ "statusLine": { "type": "command", "command": "curl -s http://localhost:4321/api/statusline" } }
+```
+
+You'll get: `$23.40 today · 40.6M tok · fable-5` — updating as you work.
 
 ### Try it with demo data
 
