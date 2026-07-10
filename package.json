@@ -1,6 +1,6 @@
 {
   "name": "claude-code-panel",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Zero-dependency local dashboard for Claude Code: commands, skills, agents, plugins, workflows, sessions and a ccusage-accurate token usage dashboard",
   "main": "server.js",
   "bin": {
