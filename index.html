@@ -298,6 +298,7 @@ const I18N = {
     replayThinking: '💭 思考过程', replayInput: '输入', replayResult: '返回结果', replayTurnMeta: '本轮耗时 {s} 秒 · {n} 条消息',
         replaySub: '一次生成的完整 trace：用户消息、思考过程、每次工具调用的输入与返回。若该会话经过 Inspector 代理，还会带上真实系统提示词和客户端版本。', replayCaptured: '本会话已被 Inspector 抓取 · Claude Code {v} · 下方为真实系统提示词与思考', 
         replayNoCapTitle: '⚠ 本次会话没有经过 Inspector 代理，所以看不到系统提示词和真实思考——它们不在 Claude Code 的会话记录文件里，只能在请求发生的当时抓取。历史会话的提示词已无法找回。', replayNoCapHint: '运行上面这条命令接入代理，之后每次 claude 的会话都会在这里自动带上完整系统提示词、工具定义、思考过程和 Claude Code 版本。', 
+        replayHistTitle: '⚠ 本次会话没有被抓取——它发生在代理启用之前（历史会话），系统提示词和思考不在会话记录里、已无法找回。', replayHistHint: '代理已接入 ✓。保持面板开着、在新开的终端里正常用 claude，之后的会话会自动带上完整系统提示词、工具定义和思考。', 
     insEmpty: '还没有抓到流量。用下面的命令启动 Claude Code，所有 API 请求就会出现在这里：', insCopy: '复制命令',
     insSystem: '📜 系统提示词', insThinking: '💭 思考过程（完整）', insTools: '🧰 工具定义', insLastUser: '最后一条用户消息',
     insResponse: '💬 响应文本', insUsage: '用量', insHint: '仅内存保留最近 50 个请求，敏感头（API Key）不会被记录',
@@ -348,6 +349,7 @@ const I18N = {
     replayThinking: '💭 Thinking', replayInput: 'Input', replayResult: 'Result', replayTurnMeta: 'Turn took {s}s · {n} messages',
         replaySub: 'The full generation trace: user messages, thinking, and every tool call with its input and result. If this session went through the Inspector proxy, the real system prompt and client version are included too.', replayCaptured: 'Captured by Inspector · Claude Code {v} · real system prompt & thinking below', 
         replayNoCapTitle: '⚠ This session did not go through the Inspector proxy, so the system prompt and real thinking are not available — they are not stored in Claude Code transcripts and can only be captured live. Past sessions cannot be recovered.', replayNoCapHint: 'Run the command above to enable the proxy; every future claude session will then show its full system prompt, tool definitions, thinking, and Claude Code version right here.', 
+        replayHistTitle: '⚠ This session was not captured — it predates the proxy (a historical session). Its system prompt and thinking are not in the transcript and cannot be recovered.', replayHistHint: 'The proxy is already set up ✓. Keep the panel running and use claude in a freshly opened terminal; future sessions will include the full system prompt, tool definitions and thinking automatically.', 
     insEmpty: 'No traffic captured yet. Launch Claude Code with the command below and every API request will show up here:', insCopy: 'Copy command',
     insSystem: '📜 System prompt', insThinking: '💭 Thinking (full)', insTools: '🧰 Tool definitions', insLastUser: 'Last user message',
     insResponse: '💬 Response text', insUsage: 'Usage', insHint: 'Last 50 requests kept in memory only; sensitive headers (API keys) are never recorded',
@@ -398,6 +400,7 @@ const I18N = {
     replayThinking: '💭 思考プロセス', replayInput: '入力', replayResult: '結果', replayTurnMeta: 'このターン {s} 秒 · {n} メッセージ',
         replaySub: '生成の完全トレース：ユーザーメッセージ、思考、各ツール呼び出しの入力と結果。Inspector プロキシ経由のセッションなら実際のシステムプロンプトとクライアントバージョンも含みます。', replayCaptured: 'Inspector が捕捉 · Claude Code {v} · 実際のシステムプロンプトと思考は下記', 
         replayNoCapTitle: '⚠ このセッションは Inspector プロキシを経由していないため、システムプロンプトと実際の思考は表示できません——これらは Claude Code のトランスクリプトに保存されず、リクエスト時にのみ捕捉できます。過去のセッションは復元できません。', replayNoCapHint: '上記のコマンドでプロキシを有効にすると、以降の claude セッションは完全なシステムプロンプト、ツール定義、思考、Claude Code バージョンをここに表示します。', 
+        replayHistTitle: '⚠ このセッションは捕捉されていません——プロキシ有効化より前の履歴セッションで、システムプロンプトと思考はトランスクリプトになく復元できません。', replayHistHint: 'プロキシは設定済み ✓。パネルを起動したまま、新しく開いたターミナルで claude を使えば、以降のセッションはシステムプロンプト・ツール定義・思考を自動的に含みます。', 
     insEmpty: 'まだトラフィックがありません。以下のコマンドで Claude Code を起動すると、全 API リクエストがここに表示されます：', insCopy: 'コマンドをコピー',
     insSystem: '📜 システムプロンプト', insThinking: '💭 思考プロセス（完全）', insTools: '🧰 ツール定義', insLastUser: '最後のユーザーメッセージ',
     insResponse: '💬 応答テキスト', insUsage: '使用量', insHint: '直近50リクエストのみメモリ保持。APIキー等の機密ヘッダーは記録されません',
@@ -726,13 +729,19 @@ async function loadReplay(id) {
       banner.textContent = '🕵️ ' + fmt(t('replayCaptured'), { v: r.clientVersion || '?' });
       wrap.appendChild(banner);
     } else {
-      // 未抓到：解释系统提示词为何不在这里，并给出开启方法
-      const cmd = `npx claude-code-panel install-proxy`;
       const note = document.createElement('div');
       note.style.cssText = 'margin-bottom:14px;padding:12px 16px;border:1px dashed var(--border);border-radius:10px;background:var(--panel);font-size:12.5px;color:var(--muted);line-height:1.6';
-      note.innerHTML = `${esc(t('replayNoCapTitle'))}<br><br><code style="background:var(--code-bg);border:1px solid var(--border);padding:2px 8px;border-radius:6px;font-family:ui-monospace,monospace;color:var(--accent2)">${esc(cmd)}</code> <button class="btn" id="ncCopy" style="padding:3px 10px;font-size:11.5px;margin-left:6px">${esc(t('insCopy'))}</button><br><br>${esc(t('replayNoCapHint'))}`;
-      wrap.appendChild(note);
-      setTimeout(() => { const b = $('#ncCopy'); if (b) b.onclick = () => { navigator.clipboard.writeText(cmd); toast('✓'); }; }, 0);
+      if (r.proxyInstalled) {
+        // 代理已装：历史会话补不回，新会话自动抓——不再叫用户装
+        note.innerHTML = `${esc(t('replayHistTitle'))}<br><br>${esc(t('replayHistHint'))}`;
+        wrap.appendChild(note);
+      } else {
+        // 真没装：给开启方法
+        const cmd = `npx claude-code-panel install-proxy`;
+        note.innerHTML = `${esc(t('replayNoCapTitle'))}<br><br><code style="background:var(--code-bg);border:1px solid var(--border);padding:2px 8px;border-radius:6px;font-family:ui-monospace,monospace;color:var(--accent2)">${esc(cmd)}</code> <button class="btn" id="ncCopy" style="padding:3px 10px;font-size:11.5px;margin-left:6px">${esc(t('insCopy'))}</button><br><br>${esc(t('replayNoCapHint'))}`;
+        wrap.appendChild(note);
+        setTimeout(() => { const b = $('#ncCopy'); if (b) b.onclick = () => { navigator.clipboard.writeText(cmd); toast('✓'); }; }, 0);
+      }
     }
     if (r.systemPrompt) {
       const det = document.createElement('details');

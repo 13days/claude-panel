@@ -122,13 +122,17 @@ function uninstallProxy() {
   console.log(n ? `✅ Removed proxy block from ${n} file(s). Open a new terminal to apply.` : 'ℹ No claude-code-panel block found.');
 }
 
+// 代理钩子是否已写进任一 shell rc
+function isProxyHookInstalled() {
+  return detectRcFiles().some(rc => {
+    try { return fs.readFileSync(rc, 'utf8').includes(RC_START); } catch { return false; }
+  });
+}
+
 // 启动时自动接入 shell（幂等）：没装过才装，装过跳过；CCP_NO_PROXY_SETUP=1 可关闭
 function ensureProxyInstalled() {
   if (process.env.CCP_NO_PROXY_SETUP) return;
-  const already = detectRcFiles().some(rc => {
-    try { return fs.readFileSync(rc, 'utf8').includes(RC_START); } catch { return false; }
-  });
-  if (already) return;
+  if (isProxyHookInstalled()) return;
   console.log('⚙️  首次启动：正在把 `claude` 接入 Inspector 代理（面板开着才走代理，关了自动直连）…');
   try { installProxy(); } catch (e) { console.log('   （自动接入失败，可手动运行 install-proxy：' + e.message + '）'); }
   console.log('   不想自动接入？设 CCP_NO_PROXY_SETUP=1 启动，或运行 uninstall-proxy 移除。\n');
@@ -881,7 +885,7 @@ function sessionReplay(id) {
     if (cap.thinking && !turn.thinking) { turn.thinking = cap.thinking; turn.thinkingLive = true; }
   }
   const truncated = turns.length > 400;
-  return { id, project, turns: turns.slice(0, 400), truncated, systemPrompt, toolDefs, clientVersion, userAgent, captured: !!systemPrompt };
+  return { id, project, turns: turns.slice(0, 400), truncated, systemPrompt, toolDefs, clientVersion, userAgent, captured: !!systemPrompt, proxyInstalled: isProxyHookInstalled() };
 }
 
 // ---------- Live 快照 / 面板配置（预算） ----------
