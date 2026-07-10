@@ -63,6 +63,10 @@
   .bubble details summary { cursor: pointer; color: var(--accent2); font-family: ui-monospace, monospace; }
   .bubble details pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-top: 6px; overflow-x: auto; font-size: 11.5px; white-space: pre-wrap; }
   #replayWrap { max-width: 920px; display: flex; flex-direction: column; }
+  .bubble details.thinking summary { color: #9085e9; }
+  .bubble details.thinking pre { color: #a99ff0; font-style: italic; background: rgba(144,133,233,.06); border-color: rgba(144,133,233,.3); }
+  .bubble .tlabel { font-size: 10.5px; color: var(--muted); margin-top: 6px; text-transform: uppercase; letter-spacing: .5px; }
+  .turn-meta { text-align: center; color: var(--muted); font-size: 11px; margin: 12px 0; font-family: ui-monospace, monospace; opacity: .7; }
 
   /* ---------- 搜索结果 / 侧栏底部按钮 ---------- */
   .sr-role { font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-right: 6px; border: 1px solid var(--border); color: var(--muted); }
@@ -281,6 +285,7 @@ const I18N = {
     bNight: '🦉 深夜码农', bBurner: '🔥 Token 燃烧机', bStreak: '⚡ 连肝选手', bShip: '🚀 稳定输出',
     searchSessionsPh: '搜标题；回车全文搜索会话内容…', srNone: '没有找到匹配的会话内容',
     replayBtn: '▶ 完整回放', replayBack: '← 返回会话详情', replayTruncated: '（会话过长，仅显示前 400 轮）',
+    replayThinking: '💭 思考过程', replayInput: '输入', replayResult: '返回结果', replayTurnMeta: '本轮耗时 {s} 秒 · {n} 条消息',
     liveToday: '今日花费', liveBurn: '燃速', liveActive: '活跃会话', liveBudget: '日预算 $', budgetSaved: '预算已保存 ✓',
     exportBtn: '⬆ 导出配置包', importBtn: '⬇ 导入配置包', importDone: '导入完成：新增 {c}，跳过 {s}',
     stSource: '数据来源：~/.claude/projects 会话记录实时统计（与 ccusage 同源，已按 message.id + requestId 去重）',
@@ -325,6 +330,7 @@ const I18N = {
     bNight: '🦉 Night Owl', bBurner: '🔥 Token Burner', bStreak: '⚡ On a Streak', bShip: '🚀 Steady Shipper',
     searchSessionsPh: 'Filter titles; press Enter for full-text search…', srNone: 'No matching session content',
     replayBtn: '▶ Full replay', replayBack: '← Back to session', replayTruncated: '(long session, first 400 turns shown)',
+    replayThinking: '💭 Thinking', replayInput: 'Input', replayResult: 'Result', replayTurnMeta: 'Turn took {s}s · {n} messages',
     liveToday: 'Today', liveBurn: 'Burn rate', liveActive: 'Active sessions', liveBudget: 'Daily budget $', budgetSaved: 'Budget saved ✓',
     exportBtn: '⬆ Export bundle', importBtn: '⬇ Import bundle', importDone: 'Imported: {c} created, {s} skipped',
     stSource: 'Source: computed live from ~/.claude/projects transcripts (same source as ccusage, deduplicated by message.id + requestId)',
@@ -369,6 +375,7 @@ const I18N = {
     bNight: '🦉 夜型エンジニア', bBurner: '🔥 トークンバーナー', bStreak: '⚡ 連続作業の達人', bShip: '🚀 安定稼働',
     searchSessionsPh: 'タイトル検索；Enter で全文検索…', srNone: '一致するセッション内容がありません',
     replayBtn: '▶ フル再生', replayBack: '← セッション詳細に戻る', replayTruncated: '（長いセッションのため先頭400ターンのみ表示）',
+    replayThinking: '💭 思考プロセス', replayInput: '入力', replayResult: '結果', replayTurnMeta: 'このターン {s} 秒 · {n} メッセージ',
     liveToday: '本日の費用', liveBurn: 'バーンレート', liveActive: 'アクティブ', liveBudget: '日予算 $', budgetSaved: '予算を保存しました ✓',
     exportBtn: '⬆ バンドルをエクスポート', importBtn: '⬇ バンドルをインポート', importDone: 'インポート完了：新規 {c}、スキップ {s}',
     stSource: 'データソース：~/.claude/projects のトランスクリプトからリアルタイム集計（ccusage と同一ソース、message.id + requestId で重複排除済み）',
@@ -679,17 +686,41 @@ async function loadReplay(id) {
     back.onclick = () => openItem(id);
     wrap.appendChild(back);
     for (const turn of r.turns) {
+      if (turn.role === 'meta') {
+        const meta = document.createElement('div');
+        meta.className = 'turn-meta';
+        meta.textContent = `⏱ ${fmt(t('replayTurnMeta'), { s: Math.round(turn.durationMs / 1000), n: turn.messageCount })}`;
+        wrap.appendChild(meta);
+        continue;
+      }
       const b = document.createElement('div');
       b.className = 'bubble ' + turn.role;
       const ts = document.createElement('div'); ts.className = 'bts';
       ts.textContent = (turn.ts || '').replace('T', ' ').slice(0, 16) + (turn.model ? ' · ' + turn.model : '');
       b.appendChild(ts);
+      // 💭 思考过程：回复是怎么想出来的
+      if (turn.thinking) {
+        const det = document.createElement('details');
+        det.className = 'thinking';
+        const sum = document.createElement('summary'); sum.textContent = t('replayThinking');
+        const pre = document.createElement('pre'); pre.textContent = turn.thinking;
+        det.append(sum, pre);
+        b.appendChild(det);
+      }
       if (turn.text) b.appendChild(document.createTextNode(turn.text));
+      // 🔧 工具轨迹：输入 + 返回
       for (const tool of (turn.tools || [])) {
         const det = document.createElement('details');
         const sum = document.createElement('summary'); sum.textContent = '🔧 ' + tool.name;
-        const pre = document.createElement('pre'); pre.textContent = tool.input;
-        det.append(sum, pre);
+        det.appendChild(sum);
+        const lin = document.createElement('div'); lin.className = 'tlabel'; lin.textContent = t('replayInput');
+        const pin = document.createElement('pre'); pin.textContent = tool.input;
+        det.append(lin, pin);
+        if (tool.result) {
+          const lout = document.createElement('div'); lout.className = 'tlabel'; lout.textContent = t('replayResult');
+          const pout = document.createElement('pre'); pout.textContent = tool.result;
+          det.append(lout, pout);
+        }
         b.appendChild(det);
       }
       wrap.appendChild(b);

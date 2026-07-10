@@ -647,34 +647,67 @@ function sessionReplay(id) {
   if (!project) return null;
   const fp = path.join(CLAUDE_DIR, 'projects', encodeProject(project), id + '.jsonl');
   if (!fs.existsSync(fp)) return null;
+  const raw = fs.readFileSync(fp, 'utf8').split('\n');
+  // 第一遍：收集 tool_result（在后续 user 行里，按 tool_use_id 配对）
+  const toolResults = new Map();
+  for (const line of raw) {
+    if (!line.includes('"tool_result"')) continue;
+    let d;
+    try { d = JSON.parse(line); } catch { continue; }
+    const content = d.message && d.message.content;
+    if (!Array.isArray(content)) continue;
+    for (const b of content) {
+      if (!b || b.type !== 'tool_result' || !b.tool_use_id) continue;
+      const c = b.content;
+      const text = typeof c === 'string' ? c
+        : Array.isArray(c) ? c.map(x => (x && x.type === 'text') ? x.text : '').join('\n')
+        : JSON.stringify(c || '');
+      toolResults.set(b.tool_use_id, (b.is_error ? '⚠ ' : '') + text.slice(0, 1500));
+    }
+  }
+  // 第二遍：构建对话轮次（含思考过程、工具输入/返回、每轮耗时）
   const byMsgId = new Map(); // 流式重复行：同 message.id 保留最后一行
   const turns = [];
-  for (const line of fs.readFileSync(fp, 'utf8').split('\n')) {
+  for (const line of raw) {
     if (!line) continue;
     const isU = line.includes('"type":"user"');
     const isA = !isU && line.includes('"type":"assistant"');
-    if (!isU && !isA) continue;
+    const isDur = !isU && !isA && line.includes('"turn_duration"');
+    if (!isU && !isA && !isDur) continue;
     let d;
     try { d = JSON.parse(line); } catch { continue; }
     if (d.isSidechain) continue;
+    if (isDur) {
+      if (d.durationMs) turns.push({ role: 'meta', ts: d.timestamp || '', durationMs: d.durationMs, messageCount: d.messageCount || 0 });
+      continue;
+    }
     const m = d.message;
     if (!m) continue;
     if (isU) {
       const text = extractText(m.content);
-      if (!text.trim()) continue; // 跳过纯 tool_result 消息
+      if (!text.trim()) continue; // 纯 tool_result 消息已在第一遍消费
       turns.push({ role: 'user', ts: d.timestamp || '', text: text.slice(0, 4000) });
     } else {
       const text = extractText(m.content);
-      const tools = Array.isArray(m.content)
-        ? m.content.filter(b => b && b.type === 'tool_use').map(b => ({
-            name: b.name, input: JSON.stringify(b.input || {}).slice(0, 400),
-          }))
-        : [];
-      if (!text.trim() && !tools.length) continue;
-      const turn = { role: 'assistant', ts: d.timestamp || '', text: text.slice(0, 6000), tools, model: m.model || '' };
+      const content = Array.isArray(m.content) ? m.content : [];
+      const thinking = content.filter(b => b && b.type === 'thinking' && b.thinking)
+        .map(b => b.thinking).join('\n\n').slice(0, 4000);
+      const tools = content.filter(b => b && b.type === 'tool_use').map(b => ({
+        name: b.name,
+        input: JSON.stringify(b.input || {}).slice(0, 600),
+        result: toolResults.get(b.id) || '',
+      }));
+      if (!text.trim() && !tools.length && !thinking) continue;
+      const turn = { role: 'assistant', ts: d.timestamp || '', text: text.slice(0, 6000), thinking, tools, model: m.model || '' };
       if (m.id) {
         const prev = byMsgId.get(m.id);
-        if (prev) { Object.assign(prev, turn); continue; } // 覆盖为最终内容
+        if (prev) {
+          // 流式分行写入：thinking/text/tool_use 可能各占一行，按字段取最长值合并
+          if (turn.text.length > prev.text.length) prev.text = turn.text;
+          if (turn.thinking.length > prev.thinking.length) prev.thinking = turn.thinking;
+          if (turn.tools.length > prev.tools.length) prev.tools = turn.tools;
+          continue;
+        }
         byMsgId.set(m.id, turn);
       }
       turns.push(turn);
