@@ -12,7 +12,7 @@ npx claude-code-panel
 
 ![zero dependencies](https://img.shields.io/badge/依赖-0-brightgreen) ![node >= 18](https://img.shields.io/badge/node-%3E%3D18-blue) ![license MIT](https://img.shields.io/badge/license-MIT-orange) ![i18n](https://img.shields.io/badge/多语言-中文%20%7C%20EN%20%7C%20日本語-purple)
 
-![demo](https://raw.githubusercontent.com/13days/claude-panel/main/docs/demo.gif)
+![demo](https://raw.githubusercontent.com/13days/claude-panel/main/docs/demo.gif?v=2)
 
 ## 为什么做这个
 
