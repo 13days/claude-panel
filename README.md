@@ -1,8 +1,8 @@
 # ⌘ Claude Panel
 
-**You've spent hundreds of dollars on Claude Code. Do you know where it went?**
+**See exactly what Claude Code sends the model — and everything else in your `~/.claude`.**
 
-A beautiful, zero-dependency local dashboard for everything in your `~/.claude` — slash commands, skills, agents, plugins, workflows, sessions, config files, and a real-time token usage dashboard that matches `ccusage` to the cent.
+A beautiful, zero-dependency local dashboard for Claude Code: browse and edit your slash commands / skills / agents / plugins / workflows, search and replay past sessions, track token spend — and, uniquely, **capture the real system prompt, tool definitions, and every LLM round-trip** behind each conversation.
 
 ```bash
 npx claude-code-panel
@@ -16,38 +16,42 @@ npx claude-code-panel
 
 ## Why
 
-Claude Code stores your customizations as loose files scattered across `~/.claude` — commands here, skills there, plugins in a JSON manifest, usage buried in 300MB of transcript JSONL. Claude Panel puts all of it in one place:
+Claude Code scatters everything across `~/.claude` — commands here, skills there, plugins in a JSON manifest, usage buried in hundreds of MB of transcript JSONL. And the most interesting thing of all — *what actually gets sent to the model* — isn't saved anywhere. Claude Panel fixes both:
 
-- **See** everything Claude Code can do for you — including its built-in slash commands and everything your plugins ship
-- **Edit** any command / skill / agent / workflow / config file right in the browser, with Markdown rendering and `⌘S` to save
-- **Measure** your token spend with a live dashboard computed from the same source as [ccusage](https://github.com/ryoppippi/ccusage) — deduplicated, streaming-aware, cost-priced per model
+- **Find** any command / skill / plugin / past session without digging through the CLI — one searchable place, editable in the browser.
+- **Recover** the session you lost after a crash or reboot: full-text search your history, one-click `claude --resume`.
+- **Understand** how a reply was produced: the exact **system prompt**, **tool definitions**, **full context**, and the **input/output of every LLM round** a query triggered.
+
+## The killer feature: see every LLM round-trip
+
+Claude Code transcripts don't store the system prompt or the raw request/response. Claude Panel runs a tiny **local reverse proxy** that Claude Code talks through, records each API call, and folds it back into the session replay — matched to the exact turn.
+
+Open a session, expand a query, and you get **"🔁 This query triggered N LLM rounds"**. Expand any round to see its **full context sent to the model** (every message, tool call, and tool result), the **system prompt**, the **tool definitions with full descriptions**, the **thinking**, and the **response** — plus token usage.
+
+![llm trace](https://raw.githubusercontent.com/13days/claude-panel/main/docs/05-replay-trace.png)
+
+Set it up once — the panel wires a smart `claude` wrapper into your shell automatically on first run (routes through the proxy when the panel is up, connects directly when it's off, never breaks). API keys are never recorded; everything stays on `127.0.0.1`.
 
 ## Features
 
 | Section | What you get |
 |---|---|
-| **/ Commands** | Your commands + plugin-provided + Claude Code built-ins, all in one searchable list. Full CRUD on yours; built-ins clearly marked read-only |
-| **Skills** | `~/.claude/skills` with frontmatter rendered as chips. Marketplace-installed skills (symlinks) are detected and protected from accidental edits |
-| **Agents** | Subagent definitions with the same editing experience |
-| **Plugins** | Installed plugins with version, marketplace, and everything they provide. One-click uninstall (manifest-only, cache preserved) |
-| **Workflows** | Named workflow scripts for the Workflow tool, with `meta` parsed for descriptions and a starter template on create |
-| **Config** | `CLAUDE.md`, `settings.json`, keybindings — edited in place, with JSON validation before save so you can't brick your setup |
-| **Sessions** | Your last 200 sessions grouped from `history.jsonl`: prompt history, time range, and a copy-paste `claude --resume` command |
-| **Stats** | Live usage dashboard: daily messages, per-model tokens, 24h activity heatline, and a `ccusage daily`-style cost table — all computed from transcripts on the fly |
-| **🕵️ Inspector** | A built-in local reverse proxy captures live Claude Code API traffic. Run `npx claude-code-panel install-proxy` once and every `claude` request is captured: **full system prompt, tool definitions, Claude Code version, and streamed response including thinking** — the stuff transcripts don't keep. Captures persist to disk and are **folded back into the matching session replay** (matched by response message id), so the trace lives with the conversation. API keys are never recorded |
-| **🔴 Live monitor** | Real-time SSE ticker on the Stats page: today's spend, burn rate ($/h over the last 10 min), active sessions — plus a daily budget with macOS notifications when you blow through it |
-| **🔍 Full-text search** | Press Enter in the Sessions tab to search across every transcript — find that conversation from three weeks ago by any word you or Claude said |
-| **▶ Session replay** | Full chat-style replay of any session: bubbles, timestamps, models, and collapsible tool calls |
-| **🎁 Wrapped** | One-click shareable PNG stats card (week/month/all-time) with spend, tokens, top command, favorite model and an earned badge |
-| **📦 Export / Import** | Bundle your commands/skills/agents/workflows into one JSON and share it with your team — import skips existing files |
+| **/ Commands** | Your commands + plugin-provided + Claude Code built-ins in one searchable list, with usage counts. Full CRUD on yours; built-ins read-only |
+| **Skills / Agents / Workflows** | Browse & edit, frontmatter as chips, Markdown rendered. Marketplace-installed items detected and protected from accidental edits |
+| **Plugins** | Installed plugins with version, marketplace, and everything they provide; one-click uninstall |
+| **Config** | `CLAUDE.md`, `settings.json`, keybindings edited in place (JSON validated before save); plus a merged CLAUDE.md view |
+| **Sessions** | Every session that still has a transcript — full-text search across all of them, chat-style **replay**, and one-click `claude --resume` |
+| **🕵️ Inspector** | Local reverse proxy capturing live traffic: system prompt, tool defs, full context, streamed response incl. thinking, Claude Code version. Persisted to disk, folded into replays |
+| **Stats** | `ccusage`-accurate usage: daily messages, per-model tokens, 24h heatline, `ccusage daily`-style cost table, and a live ticker (today's spend, burn rate, budget alerts) |
+| **🎁 Wrapped** | One-click shareable PNG stats card with spend, tokens, top command, favorite model and an earned badge |
 
-Plus the cross-cutting stuff:
+Cross-cutting:
 
-- 🌏 **Full i18n** — 中文 / English / 日本語, switchable live, covering UI, backend messages, and generated content. Adding a language is a dictionary file with automatic fallback for missing keys
-- 📁 **Project scope** — a dropdown switches Commands / Skills / Agents / Workflows / Config to any project's `.claude/` directory, including per-project memory files
-- 🎯 **Accurate usage stats** — recursive transcript scan (subagent trees included), `message.id + requestId` dedup, final-value handling for streamed responses, 5-minute vs 1-hour cache write pricing. Validated day-by-day against ccusage
-- ⚡ **Fast** — ~0.8s cold scan of 300MB of transcripts, ~13ms warm (mtime-based incremental cache)
-- 🔒 **Local only** — binds to `127.0.0.1`, path-traversal guarded, project scope restricted to known paths
+- 🌏 **Full i18n** — 中文 / English / 日本語, switchable live (UI + backend + generated content).
+- 📁 **Project scope** — a dropdown scopes Commands/Skills/Agents/Workflows/Config to any project's `.claude/` directory.
+- 🎯 **Accurate stats** — recursive transcript scan, `message.id + requestId` dedup, streaming-final handling, 5m/1h cache-tier pricing. Validated day-by-day against ccusage.
+- 🔒 **Local only** — binds to `127.0.0.1`, path-traversal guarded, API keys never recorded.
+- ⚡ **Zero dependencies** — two files, no build step, ~0.8s cold scan of 300MB transcripts (~13ms warm).
 
 ## Quick Start
 
@@ -58,121 +62,73 @@ npx claude-code-panel
 # open http://localhost:4321
 ```
 
-Or from source (no `npm install` needed — there are zero dependencies):
+On first run it wires a `claude` wrapper into your shells so future sessions are captured automatically. **Open a new terminal** (or `source ~/.zshrc`) and use `claude` as usual — with the panel running, that session's full trace shows up under Sessions. Opt out with `CCP_NO_PROXY_SETUP=1`; remove with `npx claude-code-panel uninstall-proxy`.
+
+From source (no `npm install` needed — zero dependencies):
 
 ```bash
 git clone https://github.com/13days/claude-panel.git
-cd claude-panel
-node server.js
+cd claude-panel && node server.js
 ```
 
-Environment variables:
+Environment variables: `PORT` (default `4321`), `PROXY_PORT` (default `PORT+1`), `CLAUDE_DIR` (default `~/.claude`), `CCP_NO_PROXY_SETUP=1` to skip shell setup.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `PORT` | `4321` | HTTP port |
-| `CLAUDE_DIR` | `~/.claude` | The Claude Code directory to manage |
+### Terminal statusline
 
-### One-command Inspector setup
-
-Instead of prefixing every launch, wire the proxy into all your shells once:
-
-```bash
-npx claude-code-panel install-proxy   # writes a smart `claude` wrapper to .zshrc / .bashrc / fish
-```
-
-The wrapper checks whether the panel is running **at call time**: if it is, `claude` routes through the inspector; if not, it connects directly — so it never breaks when the panel is off. Remove it anytime with `uninstall-proxy`.
-
-### Terminal statusline integration
-
-Show today's spend at the bottom of your Claude Code terminal. In `~/.claude/settings.json`:
+Show today's spend at the bottom of your Claude Code terminal — in `~/.claude/settings.json`:
 
 ```json
 { "statusLine": { "type": "command", "command": "curl -s http://localhost:4321/api/statusline" } }
 ```
 
-You'll get: `$23.40 today · 40.6M tok · fable-5` — updating as you work.
+→ `$23.40 today · 40.6M tok · fable-5`
 
 ### Try it with demo data
-
-Don't want to point it at your real `~/.claude` yet? Generate a fake one:
 
 ```bash
 python3 scripts/gen-demo-data.py
 CLAUDE_DIR="$PWD/demo-data/claude" PORT=4999 node server.js
-# open http://localhost:4999
 ```
 
 ## Screenshots
 
-### 🎁 Claude Code Wrapped — your shareable stats card
+**Usage dashboard** — live spend ticker, daily volume, per-model tokens, `ccusage daily`-style cost table:
 
-One click on the Stats page generates a beautiful PNG card of your week/month/all-time: spend, tokens, favorite command, favorite model, peak hours and an earned badge. Show off responsibly.
+![stats](https://raw.githubusercontent.com/13days/claude-panel/main/docs/01-stats-dashboard.png)
 
-<img src="https://raw.githubusercontent.com/13days/claude-panel/main/docs/10-wrapped-card.png" width="420" alt="wrapped card">
+**Inspector** — the real system prompt, tool definitions and response Claude Code never saves:
 
-### Usage dashboard — know what you burned
+![inspector](https://raw.githubusercontent.com/13days/claude-panel/main/docs/06-inspector.png)
 
-Daily message volume with hover tooltips and time-range switching, per-model token usage, 24h activity distribution:
-
-![stats dashboard](https://raw.githubusercontent.com/13days/claude-panel/main/docs/01-stats-dashboard.png)
-
-…and a `ccusage daily`-compatible cost table, priced per model with 5m/1h cache-tier awareness:
-
-![hover tooltip](https://raw.githubusercontent.com/13days/claude-panel/main/docs/02-stats-hover.png)
-
-### Every slash command in one place
-
-Yours, your plugins', and Claude Code's 34 built-ins — with source tags:
+**Every command in one place** — yours, your plugins', and Claude Code's built-ins, with usage counts:
 
 ![commands](https://raw.githubusercontent.com/13days/claude-panel/main/docs/03-commands.png)
 
-### Skills, rendered properly
+**Skills, rendered properly** · **🎁 Wrapped card** · **Speaks your language**:
 
-Frontmatter as chips, Markdown with tables and code blocks; installed skills flagged and read-only:
+<img src="https://raw.githubusercontent.com/13days/claude-panel/main/docs/04-skill-detail.png" width="49%" alt="skill"> <img src="https://raw.githubusercontent.com/13days/claude-panel/main/docs/10-wrapped-card.png" width="30%" alt="wrapped">
 
-![skill detail](https://raw.githubusercontent.com/13days/claude-panel/main/docs/04-skill-detail.png)
-
-### Edit in place
-
-`⌘S` to save. JSON config files are validated before writing:
-
-![edit mode](https://raw.githubusercontent.com/13days/claude-panel/main/docs/05-edit-mode.png)
-
-### Workflows, plugins, sessions
-
-![workflows](https://raw.githubusercontent.com/13days/claude-panel/main/docs/06-workflows.png)
-
-![plugins](https://raw.githubusercontent.com/13days/claude-panel/main/docs/07-plugins.png)
-
-Find that session from last week and resume it in one paste:
-
-![sessions](https://raw.githubusercontent.com/13days/claude-panel/main/docs/08-sessions.png)
-
-### Speaks your language
-
-![english ui](https://raw.githubusercontent.com/13days/claude-panel/main/docs/09-english-ui.png)
+![english](https://raw.githubusercontent.com/13days/claude-panel/main/docs/09-english-ui.png)
 
 ## How it works
 
-Two files. That's the whole thing.
+Two files, no framework, no build step:
 
-- **`server.js`** — a dependency-free Node HTTP server exposing a small REST API (`/api/commands`, `/api/skills`, `/api/stats`, …) over the files in `CLAUDE_DIR`. Writes are guarded (name validation, JSON parse checks, symlink detection); the usage aggregator parses transcript JSONL with an mtime-keyed in-memory cache
-- **`index.html`** — a single-page UI with its own tiny Markdown renderer and CSS charts. No build step, no framework
+- **`server.js`** — dependency-free Node HTTP server: a REST API over `CLAUDE_DIR` (guarded writes), a transcript-based usage aggregator with an mtime-keyed cache, and a reverse proxy on `PROXY_PORT` that records each `/v1/messages` round-trip (decompressing gzip/br), keyed by response message id.
+- **`index.html`** — single-page UI with its own tiny Markdown renderer and CSS charts.
 
 ### Adding a language
 
-1. Register it in `LANGS` in `index.html` (shows up in the dropdown)
-2. Add a dictionary to `I18N` in `index.html` (UI strings)
-3. Add a dictionary to `STRINGS` in `server.js` (API messages & generated content)
+1. Register it in `LANGS` (`index.html`) — shows in the dropdown.
+2. Add a dictionary to `I18N` (`index.html`) and `STRINGS` (`server.js`).
 
 Partial translations are fine — missing keys fall back `your language → English → default`.
 
 ## Caveats
 
-- Cost figures are estimates from official per-model pricing (validated against ccusage, but your billing may differ — e.g. batch discounts)
-- Transcripts are retained by Claude Code for ~30 days by default; stats can only see what's still on disk
-- The built-in command list is a static snapshot — new Claude Code versions may add commands (PRs welcome!)
+- Costs are estimates from official per-model pricing (validated against ccusage; your billing may differ).
+- Transcripts are kept ~30 days by Claude Code; the system prompt / LLM trace only exists for sessions captured live via the proxy — historical ones can't be recovered.
+- The built-in command list is a static snapshot (PRs welcome).
 
 ## License
 
