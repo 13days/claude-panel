@@ -79,6 +79,12 @@ CLAUDE_DIR="$PWD/demo-data/claude" PORT=4999 node server.js
 
 ## Screenshots
 
+### 🎁 Claude Code Wrapped — your shareable stats card
+
+One click on the Stats page generates a beautiful PNG card of your week/month/all-time: spend, tokens, favorite command, favorite model, peak hours and an earned badge. Show off responsibly.
+
+<img src="https://raw.githubusercontent.com/13days/claude-panel/main/docs/10-wrapped-card.png" width="420" alt="wrapped card">
+
 ### Usage dashboard — know what you burned
 
 Daily message volume with hover tooltips and time-range switching, per-model token usage, 24h activity distribution:

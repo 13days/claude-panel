@@ -79,6 +79,12 @@ CLAUDE_DIR="$PWD/demo-data/claude" PORT=4999 node server.js
 
 ## 截图
 
+### 🎁 Claude Code Wrapped——可分享的成绩单卡片
+
+统计页一键生成精美 PNG 卡片（周 / 月 / 全部三档）：花费、token、最爱命令、本命模型、高能时段，还有专属称号徽章。发朋友圈/推特直接用。
+
+<img src="https://raw.githubusercontent.com/13days/claude-panel/main/docs/10-wrapped-card.png" width="420" alt="wrapped 卡片">
+
 ### 用量仪表盘——烧了多少心里有数
 
 每日消息量（悬浮查看精确值、可切时间范围）、模型 token 分布、24 小时活跃时段：

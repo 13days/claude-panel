@@ -43,6 +43,12 @@
   .rangebtn { padding: 3px 10px; border-radius: 14px; font-size: 11.5px; color: var(--muted); background: var(--panel2); border: 1px solid var(--border); cursor: pointer; }
   .rangebtn.active { color: var(--text); border-color: var(--accent); background: rgba(217,123,79,.12); }
   #tip { position: fixed; display: none; background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 8px; font-size: 12px; pointer-events: none; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,.5); white-space: nowrap; font-family: ui-monospace, monospace; }
+
+  /* ---------- Wrapped 分享卡片 ---------- */
+  #wmodal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 60; align-items: center; justify-content: center; }
+  #wmodal .wbox { display: flex; flex-direction: column; gap: 12px; max-height: 94vh; }
+  #wmodal .wctrl { display: flex; gap: 8px; align-items: center; }
+  #wcanvas { width: 420px; max-height: calc(94vh - 60px); border-radius: 18px; box-shadow: 0 12px 48px rgba(0,0,0,.6); }
   .bars { display: flex; align-items: flex-end; gap: 2px; height: 120px; padding-top: 16px; }
   .bars .b { flex: 1; background: #3987e5; border-radius: 3px 3px 0 0; min-height: 2px; position: relative; }
   .bars .b:hover { background: #86b6ef; }
@@ -186,6 +192,18 @@
 <div id="toast"></div>
 <div id="tip"></div>
 
+<div id="wmodal">
+  <div class="wbox">
+    <div class="wctrl">
+      <div class="range" id="wrange"></div>
+      <div style="flex:1"></div>
+      <button class="btn primary" id="wdl"></button>
+      <button class="btn" id="wclose"></button>
+    </div>
+    <canvas id="wcanvas"></canvas>
+  </div>
+</div>
+
 <script>
 const $ = s => document.querySelector(s);
 
@@ -226,6 +244,10 @@ const I18N = {
     stTools: '工具调用', stOther: '其他',
     usesTip: '使用次数（命令来自输入历史；技能/智能体来自近 30 天会话记录）',
     stTopCommands: '命令使用排行 Top 10（全部历史）', stTopSkills: '技能 / 智能体 / 工作流调用排行（近 30 天）',
+    wrappedBtn: '🎁 生成 Wrapped 分享卡片', wSpent: '与 Claude Code 协作花费', wSessions: '会话', wMessages: '消息',
+    wDays: '活跃天数', wTopCmd: '最常用命令', wTopModel: '本命模型', wPeak: '高能时段', wStreak: '最长连续',
+    wDaysUnit: '天', wDownload: '下载 PNG', wR7: '过去 7 天', wR30: '过去 30 天',
+    bNight: '🦉 深夜码农', bBurner: '🔥 Token 燃烧机', bStreak: '⚡ 连肝选手', bShip: '🚀 稳定输出',
     stSource: '数据来源：~/.claude/projects 会话记录实时统计（与 ccusage 同源，已按 message.id + requestId 去重）',
     stTable: '每日用量明细（ccusage daily）', thDate: '日期', thModels: '模型', totalRow: '合计',
     stCostNote: '* 费用按官方定价估算（Opus $5/$25、Fable $10/$50、Haiku $1/$5、Sonnet $3/$15 每百万 token，含 5m/1h 缓存价差），已与 ccusage 逐日校验一致；带 * 的行含未知定价模型',
@@ -262,6 +284,10 @@ const I18N = {
     stTools: 'Tool calls', stOther: 'Other',
     usesTip: 'Usage count (commands from input history; skills/agents from ~30 days of transcripts)',
     stTopCommands: 'Top 10 commands (all history)', stTopSkills: 'Skill / agent / workflow invocations (last ~30 days)',
+    wrappedBtn: '🎁 Generate Wrapped card', wSpent: 'spent with Claude Code', wSessions: 'sessions', wMessages: 'messages',
+    wDays: 'active days', wTopCmd: 'Top command', wTopModel: 'Favorite model', wPeak: 'Peak hours', wStreak: 'Longest streak',
+    wDaysUnit: 'days', wDownload: 'Download PNG', wR7: 'Last 7 days', wR30: 'Last 30 days',
+    bNight: '🦉 Night Owl', bBurner: '🔥 Token Burner', bStreak: '⚡ On a Streak', bShip: '🚀 Steady Shipper',
     stSource: 'Source: computed live from ~/.claude/projects transcripts (same source as ccusage, deduplicated by message.id + requestId)',
     stTable: 'Daily usage (ccusage daily)', thDate: 'Date', thModels: 'Models', totalRow: 'Total',
     stCostNote: '* Cost estimated from official pricing (Opus $5/$25, Fable $10/$50, Haiku $1/$5, Sonnet $3/$15 per M tokens, incl. 5m/1h cache tiers), validated day-by-day against ccusage; rows marked * contain models with unknown pricing',
@@ -298,6 +324,10 @@ const I18N = {
     stTools: 'ツール呼び出し', stOther: 'その他',
     usesTip: '使用回数（コマンドは入力履歴、スキル/エージェントは直近30日のトランスクリプトから）',
     stTopCommands: 'コマンド使用ランキング Top 10（全履歴）', stTopSkills: 'スキル／エージェント／ワークフロー呼び出しランキング（直近30日）',
+    wrappedBtn: '🎁 Wrapped カードを生成', wSpent: 'Claude Code と過ごした費用', wSessions: 'セッション', wMessages: 'メッセージ',
+    wDays: 'アクティブ日数', wTopCmd: '最頻コマンド', wTopModel: '推しモデル', wPeak: 'ピーク時間帯', wStreak: '最長連続',
+    wDaysUnit: '日', wDownload: 'PNG をダウンロード', wR7: '過去7日間', wR30: '過去30日間',
+    bNight: '🦉 夜型エンジニア', bBurner: '🔥 トークンバーナー', bStreak: '⚡ 連続作業の達人', bShip: '🚀 安定稼働',
     stSource: 'データソース：~/.claude/projects のトランスクリプトからリアルタイム集計（ccusage と同一ソース、message.id + requestId で重複排除済み）',
     stTable: '日別使用量明細（ccusage daily）', thDate: '日付', thModels: 'モデル', totalRow: '合計',
     stCostNote: '* 費用は公式価格から推定（Opus $5/$25、Fable $10/$50、Haiku $1/$5、Sonnet $3/$15 / 100万トークン、5m/1h キャッシュ価格差込み）。ccusage と日次で検証済み。* 付きの行は価格不明のモデルを含みます',
@@ -699,6 +729,140 @@ function renderStatsNow() {
   $('#render').querySelectorAll('.rangebtn').forEach(b => {
     b.onclick = () => { statsRange = +b.dataset.range; renderStatsNow(); };
   });
+  const wb = $('#wrappedBtn');
+  if (wb) wb.onclick = () => openWrapped(wrappedDays);
+}
+
+// ---------- Wrapped 分享卡片 ----------
+let wrappedDays = 7;
+
+async function openWrapped(days) {
+  wrappedDays = days;
+  try {
+    const d = await api('GET', `wrapped?days=${days}`);
+    drawWrapped(d);
+    // 范围按钮
+    const wr = $('#wrange');
+    wr.innerHTML = '';
+    for (const [v, lbl] of [[7, t('wR7')], [30, t('wR30')], [0, t('rgAll')]]) {
+      const b = document.createElement('button');
+      b.className = 'rangebtn' + (v === days ? ' active' : '');
+      b.textContent = lbl;
+      b.onclick = () => openWrapped(v);
+      wr.appendChild(b);
+    }
+    $('#wdl').textContent = t('wDownload');
+    $('#wclose').textContent = t('cancel');
+    $('#wmodal').style.display = 'flex';
+  } catch (e) { toast(t('loadFail') + e.message, false); }
+}
+$('#wclose').onclick = () => { $('#wmodal').style.display = 'none'; };
+$('#wmodal').addEventListener('click', e => { if (e.target === $('#wmodal')) $('#wmodal').style.display = 'none'; });
+$('#wdl').onclick = () => {
+  $('#wcanvas').toBlob(blob => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `claude-code-wrapped-${new Date().toISOString().slice(0, 10)}.png`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }, 'image/png');
+};
+
+function pickBadge(d) {
+  if (d.peakHour !== null && (d.peakHour >= 22 || d.peakHour <= 5) || d.lateNightMessages > 100) return t('bNight');
+  if (d.activeDays > 0 && d.cost / d.activeDays > 30) return t('bBurner');
+  if (d.streak >= 5) return t('bStreak');
+  return t('bShip');
+}
+
+function rr(ctx, x, y, w, h, r, fill, stroke) {
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 2; ctx.stroke(); }
+}
+
+function drawWrapped(d) {
+  const cv = $('#wcanvas');
+  const W = 1080, H = 1350, S = 2; // 2x 导出更清晰
+  cv.width = W * S; cv.height = H * S;
+  const ctx = cv.getContext('2d');
+  ctx.scale(S, S);
+  const F = '-apple-system, "PingFang SC", "Hiragino Sans", sans-serif';
+  const M = 'ui-monospace, "SF Mono", Menlo, monospace';
+
+  // 背景：深色渐变 + 顶部品牌色光晕
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#0f1115'); g.addColorStop(1, '#191019');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const rg = ctx.createRadialGradient(W / 2, 160, 0, W / 2, 160, 560);
+  rg.addColorStop(0, 'rgba(217,123,79,.16)'); rg.addColorStop(1, 'rgba(217,123,79,0)');
+  ctx.fillStyle = rg; ctx.fillRect(0, 0, W, 720);
+
+  // 头部
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#e8965f'; ctx.font = `700 30px ${F}`;
+  ctx.fillText('⌘   C L A U D E   C O D E   W R A P P E D', W / 2, 98);
+  const rangeLbl = d.days === 7 ? t('wR7') : d.days === 30 ? t('wR30') : t('rgAll');
+  ctx.fillStyle = '#8b93a5'; ctx.font = `400 26px ${F}`;
+  ctx.fillText(`${rangeLbl} · ${d.from} → ${d.to}`, W / 2, 146);
+
+  // 主数字：花费
+  ctx.fillStyle = '#ffffff'; ctx.font = `800 148px ${F}`;
+  const hero = d.costKnown ? '$' + d.cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : fmtNum(d.tokens);
+  ctx.fillText(hero, W / 2, 330);
+  ctx.fillStyle = '#8b93a5'; ctx.font = `400 30px ${F}`;
+  ctx.fillText(d.costKnown ? t('wSpent') : 'tokens', W / 2, 386);
+
+  // 2×2 数据网格
+  const tiles = [
+    [fmtNum(d.sessions), t('wSessions')], [fmtNum(d.messages), t('wMessages')],
+    [fmtNum(d.tokens), 'tokens'], [String(d.activeDays), t('wDays')],
+  ];
+  const tw = 470, th = 148, gap = 36, x0 = (W - tw * 2 - gap) / 2, y0 = 448;
+  tiles.forEach((tl, i) => {
+    const x = x0 + (i % 2) * (tw + gap), y = y0 + Math.floor(i / 2) * (th + 28);
+    rr(ctx, x, y, tw, th, 20, '#171a21', '#2a2f3a');
+    ctx.fillStyle = '#fff'; ctx.font = `700 52px ${F}`;
+    ctx.fillText(tl[0], x + tw / 2, y + 70);
+    ctx.fillStyle = '#8b93a5'; ctx.font = `400 24px ${F}`;
+    ctx.fillText(tl[1], x + tw / 2, y + 112);
+  });
+
+  // 明细行
+  const rows = [
+    [t('wTopCmd'), d.topCommands[0] ? `/${d.topCommands[0][0]}  ×${d.topCommands[0][1]}` : '—'],
+    [t('wTopModel'), d.topModel ? d.topModel.name : '—'],
+    [t('wPeak'), d.peakHour !== null ? `${d.peakHour}:00 – ${d.peakHour + 1}:00` : '—'],
+    [t('wStreak'), `${d.streak} ${t('wDaysUnit')}`],
+  ];
+  let ry = 880;
+  rows.forEach(r => {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#8b93a5'; ctx.font = `400 28px ${F}`;
+    ctx.fillText(r[0], x0 + 6, ry);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#e6e9ef'; ctx.font = `700 32px ${M}`;
+    ctx.fillText(r[1], W - x0 - 6, ry);
+    ry += 72;
+    ctx.strokeStyle = 'rgba(42,47,58,.7)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x0, ry - 44); ctx.lineTo(W - x0, ry - 44); ctx.stroke();
+  });
+
+  // 称号徽章
+  ctx.textAlign = 'center';
+  const badge = pickBadge(d);
+  ctx.font = `700 34px ${F}`;
+  const bw = Math.max(360, ctx.measureText(badge).width + 120);
+  rr(ctx, W / 2 - bw / 2, 1176, bw, 78, 39, 'rgba(217,123,79,.14)', '#d97b4f');
+  ctx.fillStyle = '#e8965f';
+  ctx.fillText(badge, W / 2, 1228);
+
+  // 页脚
+  ctx.fillStyle = '#8b93a5'; ctx.font = `400 24px ${M}`;
+  ctx.fillText('npx claude-code-panel', W / 2, 1298);
+  ctx.fillStyle = '#4a5160';
+  ctx.fillText('github.com/13days/claude-panel', W / 2, 1332);
 }
 
 function statsHTML(d) {
@@ -712,7 +876,8 @@ function statsHTML(d) {
     [(d.firstSessionDate || '').slice(0, 10) || '—', t('stSince')],
   ];
   h += '<div class="cards">' + cards.map(([v, k]) => `<div class="card"><div class="v">${esc(v)}</div><div class="k">${esc(k)}</div></div>`).join('') + '</div>';
-  if (d.source === 'transcripts') h += `<div style="font-size:11.5px;color:var(--muted);margin:-8px 0 16px">${esc(t('stSource'))}</div>`;
+  if (d.source === 'transcripts') h += `<div style="font-size:11.5px;color:var(--muted);margin:-8px 0 12px">${esc(t('stSource'))}</div>`;
+  h += `<div style="margin:0 0 18px"><button class="btn primary" id="wrappedBtn">${esc(t('wrappedBtn'))}</button></div>`;
 
   // 每日消息量，单一系列：单色 + 峰值直接标注 + 悬浮提示 + 时间范围切换
   const recent = statsRange ? days.slice(-statsRange) : days;

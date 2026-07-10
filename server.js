@@ -382,8 +382,9 @@ function localDay(ts) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+const PARSE_VERSION = 2; // 解析结构变更时 +1，旧缓存自动重建
 function parseTranscript(fp) {
-  const out = { records: [], userMsgs: 0, userByDay: {}, hourCounts: {}, firstTs: null, toolUses: [] };
+  const out = { v: PARSE_VERSION, records: [], userMsgs: 0, userByDay: {}, hourCounts: {}, firstTs: null, toolUses: [] };
   let content;
   try { content = fs.readFileSync(fp, 'utf8'); } catch { return out; }
   for (const line of content.split('\n')) {
@@ -426,6 +427,7 @@ function parseTranscript(fp) {
       key: (m.id || '') + '|' + (d.requestId || ''),
       model: m.model,
       day: ts ? localDay(ts) : null,
+      hour: ts ? new Date(ts).getHours() : null,
       in: u.input_tokens || 0, out: u.output_tokens || 0,
       cr: u.cache_read_input_tokens || 0, cc: u.cache_creation_input_tokens || 0, c1,
     });
@@ -489,7 +491,7 @@ function parsedFor(fp) {
   let st;
   try { st = fs.statSync(fp); } catch { return null; }
   let entry = _usageCache.get(fp);
-  if (!entry || entry.mtimeMs !== st.mtimeMs || entry.size !== st.size) {
+  if (!entry || entry.mtimeMs !== st.mtimeMs || entry.size !== st.size || entry.parsed.v !== PARSE_VERSION) {
     entry = { mtimeMs: st.mtimeMs, size: st.size, parsed: parseTranscript(fp) };
     _usageCache.set(fp, entry);
   }
@@ -519,6 +521,69 @@ function usageCounts() {
     }
   }
   return counts;
+}
+
+// Wrapped 分享卡片数据：按天数窗口聚合（days=0 表示全部）
+function wrappedStats(days) {
+  const cutoff = days > 0 ? localDay(new Date(Date.now() - (days - 1) * 86400e3)) : '';
+  const cutoffMs = days > 0 ? Date.now() - days * 86400e3 : 0;
+  const seen = new Set();
+  const models = {}, byDay = {}, hourCounts = {};
+  let cost = 0, tokens = 0, msgs = 0, costKnown = true;
+  for (const fp of transcriptFiles().files) {
+    const p = parsedFor(fp);
+    if (!p) continue;
+    for (const [d, n] of Object.entries(p.userByDay)) {
+      if (d >= cutoff) { byDay[d] = (byDay[d] || 0) + n; msgs += n; }
+    }
+    for (const r of p.records) {
+      if (!r.day || r.day < cutoff) continue;
+      if (r.key !== '|') { if (seen.has(r.key)) continue; seen.add(r.key); }
+      msgs++;
+      byDay[r.day] = (byDay[r.day] || 0) + 1;
+      if (r.hour !== null) hourCounts[r.hour] = (hourCounts[r.hour] || 0) + 1;
+      const t = models[r.model] ||= { tokens: 0 };
+      const tk = r.in + r.out + r.cc + r.cr;
+      t.tokens += tk; tokens += tk;
+      const c = costOf(r.model, { in: r.in, out: r.out, cc: r.cc, c1: r.c1, cr: r.cr });
+      if (c === null) costKnown = false; else cost += c;
+    }
+  }
+  // 命令 top3 与会话数（history 有时间戳，可精确按窗口过滤）
+  const cmdCounts = {};
+  const sessionIds = new Set();
+  for (const e of readHistory()) {
+    if ((e.timestamp || 0) < cutoffMs) continue;
+    if (e.sessionId) sessionIds.add(e.sessionId);
+    const disp = e.display || '';
+    if (disp.startsWith('/') && disp.length > 1) {
+      const name = disp.slice(1).split(/\s/)[0];
+      if (/^[\w:-]+$/.test(name)) cmdCounts[name] = (cmdCounts[name] || 0) + 1;
+    }
+  }
+  const activeDays = Object.keys(byDay).length;
+  // 最长连续活跃天数
+  const sorted = Object.keys(byDay).sort();
+  let streak = 0, cur = 0, prev = null;
+  for (const d of sorted) {
+    cur = (prev && (new Date(d) - new Date(prev)) === 86400e3) ? cur + 1 : 1;
+    if (cur > streak) streak = cur;
+    prev = d;
+  }
+  const busiest = sorted.reduce((b, d) => (!b || byDay[d] > byDay[b] ? d : b), null);
+  const peakHour = Object.entries(hourCounts).reduce((b, [h, n]) => (!b || n > b[1] ? [h, n] : b), null);
+  const lateNight = [0, 1, 2, 3, 4, 5].reduce((s, h) => s + (hourCounts[h] || 0), 0);
+  const topModel = Object.entries(models).sort((a, b) => b[1].tokens - a[1].tokens)[0];
+  return {
+    days, from: cutoff || sorted[0] || '', to: localDay(new Date()),
+    cost: Math.round(cost * 100) / 100, costKnown, tokens, messages: msgs,
+    sessions: sessionIds.size, activeDays, streak,
+    busiestDay: busiest ? { date: busiest, messages: byDay[busiest] } : null,
+    topCommands: Object.entries(cmdCounts).sort((a, b) => b[1] - a[1]).slice(0, 3),
+    topModel: topModel ? { name: shortModel(topModel[0]), tokens: topModel[1].tokens } : null,
+    peakHour: peakHour ? Number(peakHour[0]) : null,
+    lateNightMessages: lateNight,
+  };
 }
 
 function readStats() {
@@ -784,6 +849,12 @@ const server = http.createServer(async (req, res) => {
     // ---- 使用次数 ----
     if (type === 'usage' && req.method === 'GET') {
       return sendJSON(res, 200, usageCounts());
+    }
+
+    // ---- Wrapped 分享卡片 ----
+    if (type === 'wrapped' && req.method === 'GET') {
+      const days = Math.max(0, parseInt(url.searchParams.get('days') || '7', 10) || 0);
+      return sendJSON(res, 200, wrappedStats(days));
     }
 
     // ---- 会话历史 ----
