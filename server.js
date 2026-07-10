@@ -122,6 +122,18 @@ function uninstallProxy() {
   console.log(n ? `✅ Removed proxy block from ${n} file(s). Open a new terminal to apply.` : 'ℹ No claude-code-panel block found.');
 }
 
+// 启动时自动接入 shell（幂等）：没装过才装，装过跳过；CCP_NO_PROXY_SETUP=1 可关闭
+function ensureProxyInstalled() {
+  if (process.env.CCP_NO_PROXY_SETUP) return;
+  const already = detectRcFiles().some(rc => {
+    try { return fs.readFileSync(rc, 'utf8').includes(RC_START); } catch { return false; }
+  });
+  if (already) return;
+  console.log('⚙️  首次启动：正在把 `claude` 接入 Inspector 代理（面板开着才走代理，关了自动直连）…');
+  try { installProxy(); } catch (e) { console.log('   （自动接入失败，可手动运行 install-proxy：' + e.message + '）'); }
+  console.log('   不想自动接入？设 CCP_NO_PROXY_SETUP=1 启动，或运行 uninstall-proxy 移除。\n');
+}
+
 const CLI_CMD = process.argv[2];
 if (CLI_CMD === 'install-proxy') { installProxy(); process.exit(0); }
 if (CLI_CMD === 'uninstall-proxy') { uninstallProxy(); process.exit(0); }
@@ -857,18 +869,19 @@ function sessionReplay(id) {
   }
   // 关联 Inspector 抓包：响应 message.id 匹配到本会话的轮次，
   // 就把真实系统提示词 / 思考过程 / 客户端版本回填进回放（这些 transcript 里没有）
-  let systemPrompt = '', clientVersion = '', userAgent = '';
+  let systemPrompt = '', clientVersion = '', userAgent = '', toolDefs = [];
   for (const turn of turns) {
     if (turn.role !== 'assistant' || !turn.msgId) continue;
     const cap = _captureIndex.get(turn.msgId);
     if (!cap) continue;
     if (!systemPrompt && cap.sysHash) systemPrompt = _systemPool.get(cap.sysHash) || '';
+    if (!toolDefs.length && cap.toolsHash) toolDefs = _toolsPool.get(cap.toolsHash) || [];
     if (!clientVersion && cap.clientVersion) clientVersion = cap.clientVersion;
     if (!userAgent && cap.userAgent) userAgent = cap.userAgent;
     if (cap.thinking && !turn.thinking) { turn.thinking = cap.thinking; turn.thinkingLive = true; }
   }
   const truncated = turns.length > 400;
-  return { id, project, turns: turns.slice(0, 400), truncated, systemPrompt, clientVersion, userAgent, captured: !!systemPrompt };
+  return { id, project, turns: turns.slice(0, 400), truncated, systemPrompt, toolDefs, clientVersion, userAgent, captured: !!systemPrompt };
 }
 
 // ---------- Live 快照 / 面板配置（预算） ----------
@@ -1208,14 +1221,21 @@ let _capturesAppended = 0;
 
 // 关联索引：响应 message.id → 折叠进回放所需字段。
 // 独立于展示用的 200 条缓冲，覆盖磁盘上全部抓包，保证老会话也能关联到。
-const _captureIndex = new Map();   // respMsgId -> { sysHash, thinking, clientVersion, userAgent }
+const _captureIndex = new Map();   // respMsgId -> { sysHash, toolsHash, thinking, clientVersion, userAgent }
 const _systemPool = new Map();     // hash -> system 文本（去重，避免每条都存一份大提示词）
+const _toolsPool = new Map();      // hash -> 工具定义数组（去重，同会话各轮工具相同）
 function hashStr(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return String(h); }
 function indexCapture(rec) {
   if (!rec || !rec.respMsgId) return;
   let sysHash = '';
   if (rec.system) { sysHash = hashStr(rec.system); if (!_systemPool.has(sysHash)) _systemPool.set(sysHash, rec.system); }
-  _captureIndex.set(rec.respMsgId, { sysHash, thinking: rec.thinking || '', clientVersion: rec.clientVersion || '', userAgent: rec.userAgent || '' });
+  let toolsHash = '';
+  if (Array.isArray(rec.tools) && rec.tools.length) {
+    const key = JSON.stringify(rec.tools);
+    toolsHash = hashStr(key);
+    if (!_toolsPool.has(toolsHash)) _toolsPool.set(toolsHash, rec.tools);
+  }
+  _captureIndex.set(rec.respMsgId, { sysHash, toolsHash, thinking: rec.thinking || '', clientVersion: rec.clientVersion || '', userAgent: rec.userAgent || '' });
 }
 
 // 启动时从磁盘恢复抓包记录（避免重启后丢失）
@@ -1304,7 +1324,7 @@ function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream,
     rec.system = typeof b.system === 'string' ? b.system
       : Array.isArray(b.system) ? b.system.map(s => s.text || '').join('\n\n') : '';
     rec.tools = Array.isArray(b.tools)
-      ? b.tools.map(t => ({ name: t.name, description: (t.description || '').slice(0, 300) })).filter(t => t.name)
+      ? b.tools.map(t => ({ name: t.name, description: (t.description || '').slice(0, 4000) })).filter(t => t.name)
       : [];
     const lastU = (b.messages || []).filter(m => m.role === 'user').pop();
     if (lastU) rec.lastUser = extractText(lastU.content).slice(0, 500);
@@ -1367,6 +1387,10 @@ const proxyServer = http.createServer((req, res) => {
   });
 });
 loadCaptures();
+proxyServer.on('error', e => {
+  // 端口被占等情况：只关掉 Inspector，别拖垮整个面板
+  console.warn(`⚠ Inspector 代理未能在 ${PROXY_PORT} 启动（${e.code || e.message}）；面板其余功能正常。可设 PROXY_PORT=其它端口。`);
+});
 proxyServer.listen(PROXY_PORT, '127.0.0.1');
 
 // ---------- server ----------
@@ -1477,6 +1501,7 @@ const server = http.createServer(async (req, res) => {
         _inspect.length = 0;
         _captureIndex.clear();
         _systemPool.clear();
+        _toolsPool.clear();
         _capturesAppended = 0;
         try { fs.writeFileSync(CAPTURES_FILE, ''); } catch {}
         return sendJSON(res, 200, { ok: true });
@@ -1679,6 +1704,5 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`Claude Panel 已启动: http://localhost:${PORT}`);
   console.log(`管理目录: ${CLAUDE_DIR}`);
   console.log(`Inspector 代理: http://localhost:${PROXY_PORT}`);
-  console.log(`  一次性接入所有终端:  npx claude-code-panel install-proxy`);
-  console.log(`  （之后每次 claude 自动走代理；面板没开时自动直连，不会中断）`);
+  ensureProxyInstalled();
 });

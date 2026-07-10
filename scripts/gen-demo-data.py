@@ -288,7 +288,15 @@ if cap:
     rec = {
         "id": 1, "ts": now.strftime('%Y-%m-%dT%H:%M:%S.000Z'), "path": "/v1/messages", "status": 200,
         "durationMs": 8200, "model": cap["model"], "system": DEMO_SYSTEM,
-        "tools": ["Bash", "Read", "Edit", "Write", "Grep", "Glob", "TodoWrite", "Task", "WebFetch"],
+        "tools": [
+            {"name": "Bash", "description": "Executes a bash command in a persistent shell session with optional timeout. Use for running scripts, git, package managers. Avoid using it for file search — prefer Grep/Glob."},
+            {"name": "Read", "description": "Reads a file from the local filesystem. Supports images, PDFs and Jupyter notebooks. Returns content with line numbers in cat -n format."},
+            {"name": "Edit", "description": "Performs exact string replacements in a file. You must Read the file before editing. old_string must be unique unless replace_all is set."},
+            {"name": "Write", "description": "Writes a file to the local filesystem, overwriting if it exists. Prefer Edit for partial changes to existing files."},
+            {"name": "Grep", "description": "A powerful search tool built on ripgrep. Supports full regex, glob filtering, and output modes (content / files_with_matches / count)."},
+            {"name": "TodoWrite", "description": "Create and manage a structured task list for the current coding session to track progress and give the user visibility."},
+            {"name": "Task", "description": "Launch a new subagent to handle complex, multi-step tasks autonomously. Choose the agent type that best matches the task."},
+        ],
         "messagesCount": 12, "lastUser": "Add rate limiting to the public API gateway",
         "respMsgId": cap["msg_id"], "userAgent": "claude-cli/2.1.4 (external, cli)", "clientVersion": "2.1.4",
         "anthropicVersion": "2023-06-01", "betas": "context-1m-2025-08-07",

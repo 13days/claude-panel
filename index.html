@@ -59,6 +59,15 @@
   .bubble.user { margin-left: auto; background: rgba(217,123,79,.16); border: 1px solid rgba(217,123,79,.35); border-bottom-right-radius: 4px; }
   .bubble.assistant { margin-right: auto; background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
   .bubble .bts { font-size: 10.5px; color: var(--muted); margin-bottom: 4px; font-family: ui-monospace, monospace; }
+  .bubble .mdbody { white-space: normal; }
+  .bubble .mdbody > :first-child { margin-top: 0; }
+  .bubble .mdbody > :last-child { margin-bottom: 0; }
+  .bubble .mdbody p { margin: 6px 0; }
+  .bubble .mdbody ul, .bubble .mdbody ol { margin: 6px 0 6px 22px; }
+  .bubble .mdbody code { background: var(--code-bg); border: 1px solid var(--border); padding: 1px 5px; border-radius: 5px; font-family: ui-monospace, monospace; font-size: 12px; }
+  .bubble .mdbody pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; overflow-x: auto; margin: 8px 0; }
+  .bubble .mdbody pre code { background: none; border: none; padding: 0; }
+  .bubble .mdbody h1, .bubble .mdbody h2, .bubble .mdbody h3 { font-size: 15px; margin: 10px 0 6px; }
   .bubble details { margin-top: 6px; font-size: 12px; }
   .bubble details summary { cursor: pointer; color: var(--accent2); font-family: ui-monospace, monospace; }
   .bubble details pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-top: 6px; overflow-x: auto; font-size: 11.5px; white-space: pre-wrap; }
@@ -737,6 +746,31 @@ async function loadReplay(id) {
       det.append(sum, pre);
       wrap.appendChild(det);
     }
+    // 🧰 抓包到的工具定义（含完整描述）
+    if (r.toolDefs && r.toolDefs.length) {
+      const det = document.createElement('details');
+      det.style.marginBottom = '14px';
+      const sum = document.createElement('summary');
+      sum.textContent = t('insTools') + ' (' + r.toolDefs.length + ')';
+      sum.style.cssText = 'cursor:pointer;font-weight:700;font-size:14px;color:var(--accent2);padding:6px 0';
+      det.appendChild(sum);
+      const box = document.createElement('div');
+      box.style.cssText = 'margin-top:8px;display:flex;flex-direction:column;gap:6px';
+      for (const td of r.toolDefs) {
+        const item = document.createElement('details');
+        item.style.cssText = 'background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px';
+        const s2 = document.createElement('summary');
+        s2.style.cssText = 'cursor:pointer;font-family:ui-monospace,monospace;font-size:12.5px;color:var(--text)';
+        s2.textContent = td.name;
+        const d2 = document.createElement('div');
+        d2.style.cssText = 'font-size:12px;color:var(--muted);margin-top:6px;white-space:pre-wrap;line-height:1.5';
+        d2.textContent = td.description || '(无描述)';
+        item.append(s2, d2);
+        box.appendChild(item);
+      }
+      det.appendChild(box);
+      wrap.appendChild(det);
+    }
     for (const turn of r.turns) {
       if (turn.role === 'meta') {
         const meta = document.createElement('div');
@@ -759,7 +793,16 @@ async function loadReplay(id) {
         det.append(sum, pre);
         b.appendChild(det);
       }
-      if (turn.text) b.appendChild(document.createTextNode(turn.text));
+      if (turn.text) {
+        // 助手回复按 markdown 渲染；用户消息保留原文（纯文本）
+        if (turn.role === 'assistant') {
+          const mb = document.createElement('div'); mb.className = 'mdbody';
+          mb.innerHTML = md(turn.text);
+          b.appendChild(mb);
+        } else {
+          b.appendChild(document.createTextNode(turn.text));
+        }
+      }
       // 🔧 工具轨迹：摘要行带内容预览，展开看完整输入 + 返回
       for (const tool of (turn.tools || [])) {
         const det = document.createElement('details');
