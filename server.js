@@ -803,7 +803,7 @@ function sessionReplay(id) {
       const text = typeof c === 'string' ? c
         : Array.isArray(c) ? c.map(x => (x && x.type === 'text') ? x.text : '').join('\n')
         : JSON.stringify(c || '');
-      toolResults.set(b.tool_use_id, (b.is_error ? '⚠ ' : '') + text.slice(0, 1500));
+      toolResults.set(b.tool_use_id, (b.is_error ? '⚠ ' : '') + text.slice(0, 4000));
     }
   }
   // 第二遍：构建对话轮次（含思考过程、工具输入/返回、每轮耗时）
@@ -835,7 +835,7 @@ function sessionReplay(id) {
         .map(b => b.thinking).join('\n\n').slice(0, 4000);
       const tools = content.filter(b => b && b.type === 'tool_use').map(b => ({
         name: b.name,
-        input: JSON.stringify(b.input || {}).slice(0, 600),
+        input: JSON.stringify(b.input || {}, null, 2).slice(0, 4000), // 缩进美化，完整参数
         result: toolResults.get(b.id) || '',
       }));
       if (!text.trim() && !tools.length && !thinking) continue;
@@ -856,21 +856,15 @@ function sessionReplay(id) {
   }
   // 关联 Inspector 抓包：响应 message.id 匹配到本会话的轮次，
   // 就把真实系统提示词 / 思考过程 / 客户端版本回填进回放（这些 transcript 里没有）
-  const msgIds = new Set(turns.filter(x => x.role === 'assistant' && x.msgId).map(x => x.msgId));
   let systemPrompt = '', clientVersion = '', userAgent = '';
-  const liveThink = {};
-  for (const rec of _inspect) {
-    if (!rec.respMsgId || !msgIds.has(rec.respMsgId)) continue;
-    if (!systemPrompt && rec.system) systemPrompt = rec.system;
-    if (!clientVersion && rec.clientVersion) clientVersion = rec.clientVersion;
-    if (!userAgent && rec.userAgent) userAgent = rec.userAgent;
-    if (rec.thinking) liveThink[rec.respMsgId] = rec.thinking;
-  }
   for (const turn of turns) {
-    if (turn.role === 'assistant' && turn.msgId && liveThink[turn.msgId] && !turn.thinking) {
-      turn.thinking = liveThink[turn.msgId];
-      turn.thinkingLive = true;
-    }
+    if (turn.role !== 'assistant' || !turn.msgId) continue;
+    const cap = _captureIndex.get(turn.msgId);
+    if (!cap) continue;
+    if (!systemPrompt && cap.sysHash) systemPrompt = _systemPool.get(cap.sysHash) || '';
+    if (!clientVersion && cap.clientVersion) clientVersion = cap.clientVersion;
+    if (!userAgent && cap.userAgent) userAgent = cap.userAgent;
+    if (cap.thinking && !turn.thinking) { turn.thinking = cap.thinking; turn.thinkingLive = true; }
   }
   const truncated = turns.length > 400;
   return { id, project, turns: turns.slice(0, 400), truncated, systemPrompt, clientVersion, userAgent, captured: !!systemPrompt };
@@ -1205,21 +1199,36 @@ function readBody(req) {
 // ---------- Inspector：本地反向代理抓包 ----------
 // 用法：ANTHROPIC_BASE_URL=http://localhost:<PROXY_PORT> claude
 // 面板即可看到每个请求的完整 payload（系统提示词、工具定义、消息、流式响应含 thinking）
-const INSPECT_MAX = 200;
+const INSPECT_MAX = 200;              // 内存中用于列表展示的最近抓包数
 const CAPTURES_FILE = path.join(CLAUDE_DIR, 'panel-captures.jsonl');
-const _inspect = []; // 环形缓冲，最新在前
+const _inspect = []; // 环形缓冲，最新在前（用于抓包列表）
 let _inspectSeq = 0;
 let _capturesAppended = 0;
+
+// 关联索引：响应 message.id → 折叠进回放所需字段。
+// 独立于展示用的 200 条缓冲，覆盖磁盘上全部抓包，保证老会话也能关联到。
+const _captureIndex = new Map();   // respMsgId -> { sysHash, thinking, clientVersion, userAgent }
+const _systemPool = new Map();     // hash -> system 文本（去重，避免每条都存一份大提示词）
+function hashStr(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return String(h); }
+function indexCapture(rec) {
+  if (!rec || !rec.respMsgId) return;
+  let sysHash = '';
+  if (rec.system) { sysHash = hashStr(rec.system); if (!_systemPool.has(sysHash)) _systemPool.set(sysHash, rec.system); }
+  _captureIndex.set(rec.respMsgId, { sysHash, thinking: rec.thinking || '', clientVersion: rec.clientVersion || '', userAgent: rec.userAgent || '' });
+}
 
 // 启动时从磁盘恢复抓包记录（避免重启后丢失）
 function loadCaptures() {
   try {
     const lines = fs.readFileSync(CAPTURES_FILE, 'utf8').split('\n').filter(Boolean);
+    // 全量建关联索引；仅最近 INSPECT_MAX 条进展示缓冲
+    for (const line of lines) {
+      try { indexCapture(JSON.parse(line)); } catch {}
+    }
     for (const line of lines.slice(-INSPECT_MAX)) {
-      try { _inspect.unshift(JSON.parse(line)); } catch {}
+      try { const r = JSON.parse(line); _inspect.unshift(r); if (r.id > _inspectSeq) _inspectSeq = r.id; } catch {}
     }
     _capturesAppended = lines.length;
-    for (const r of _inspect) if (r.id > _inspectSeq) _inspectSeq = r.id;
   } catch {}
 }
 
@@ -1282,7 +1291,9 @@ function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream,
     // 系统提示词：string 或 [{type:'text',text}] 数组
     rec.system = typeof b.system === 'string' ? b.system
       : Array.isArray(b.system) ? b.system.map(s => s.text || '').join('\n\n') : '';
-    rec.tools = Array.isArray(b.tools) ? b.tools.map(t => t.name).filter(Boolean) : [];
+    rec.tools = Array.isArray(b.tools)
+      ? b.tools.map(t => ({ name: t.name, description: (t.description || '').slice(0, 300) })).filter(t => t.name)
+      : [];
     const lastU = (b.messages || []).filter(m => m.role === 'user').pop();
     if (lastU) rec.lastUser = extractText(lastU.content).slice(0, 500);
   } catch {}
@@ -1306,6 +1317,7 @@ function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream,
   rec.system = rec.system.slice(0, 200000);
   _inspect.unshift(rec);
   if (_inspect.length > INSPECT_MAX) _inspect.pop();
+  indexCapture(rec);
   persistCapture(rec);
 }
 
@@ -1451,6 +1463,8 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'DELETE' && parts.length === 2) {
         _inspect.length = 0;
+        _captureIndex.clear();
+        _systemPool.clear();
         _capturesAppended = 0;
         try { fs.writeFileSync(CAPTURES_FILE, ''); } catch {}
         return sendJSON(res, 200, { ok: true });
