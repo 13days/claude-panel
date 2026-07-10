@@ -213,11 +213,26 @@ for day_off in range(44, -1, -1):
         n_turns = random.randint(2, 6)
         # recent 12 days lean fable+opus, older lean opus/sonnet/haiku
         pool = ['claude-fable-5', 'claude-opus-4-8', 'claude-haiku-4-5-20251001'] if day_off <= 12 else ['claude-opus-4-8', 'claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001']
+        def J(o): return json.dumps(o, separators=(",", ":"))
+        REPLIES = [
+            "Let me look at how this is wired up before changing anything.",
+            "Found it — the handler wasn't awaiting the async call. Fixing now.",
+            "I'll add a test that reproduces this first, then apply the fix.",
+            "Done. Ran the suite and all 42 tests pass.",
+            "Here's the plan: 1) add rate limiter middleware 2) wire it into the gateway 3) add tests.",
+        ]
+        TOOLCALLS = [
+            ("Bash", {"command": "npm test", "description": "Run the test suite"}),
+            ("Read", {"file_path": "src/gateway/index.ts"}),
+            ("Edit", {"file_path": "src/billing/events.ts", "old_string": "sync()", "new_string": "await sync()"}),
+            ("Grep", {"pattern": "rateLimit", "output_mode": "files_with_matches"}),
+        ]
+        RESULTS = ["✓ 42 passing (3.1s)", "export function handler(req, res) { … }", "Applied 1 edit to src/billing/events.ts", "src/gateway/rateLimit.ts"]
         for turn in range(n_turns):
             ts = start + timedelta(minutes=turn * random.randint(3, 12))
             prompt = random.choice(PROMPTS)
             history.append({"display": prompt, "pastedContents": {}, "timestamp": int(ts.timestamp() * 1000), "project": proj, "sessionId": sid})
-            lines.append(json.dumps({"type": "user", "message": {"role": "user", "content": prompt}, "sessionId": sid, "timestamp": ts.strftime('%Y-%m-%dT%H:%M:%S.000Z')}, separators=(",", ":")))
+            lines.append(J({"type": "user", "message": {"role": "user", "content": prompt}, "sessionId": sid, "timestamp": ts.strftime('%Y-%m-%dT%H:%M:%S.000Z')}))
             for a in range(random.randint(3, 14)):
                 ats = ts + timedelta(seconds=20 * (a + 1))
                 model = pool[0] if random.random() < 0.6 else random.choice(pool)
@@ -228,11 +243,60 @@ for day_off in range(44, -1, -1):
                     "cache_creation_input_tokens": random.randint(1000, 60000),
                 }
                 usage["cache_creation"] = {"ephemeral_1h_input_tokens": int(usage["cache_creation_input_tokens"] * 0.3), "ephemeral_5m_input_tokens": int(usage["cache_creation_input_tokens"] * 0.7)}
-                lines.append(json.dumps({"type": "assistant", "requestId": f'req_{uuid.uuid4().hex[:12]}',
-                    "message": {"id": f'msg_{uuid.uuid4().hex[:16]}', "role": "assistant", "model": model, "usage": usage},
-                    "sessionId": sid, "timestamp": ats.strftime('%Y-%m-%dT%H:%M:%S.000Z')}, separators=(",", ":")))
+                msg_id = f'msg_{uuid.uuid4().hex[:16]}'
+                # 内容块：文本 +（部分）工具调用，让回放有实际内容
+                content = [{"type": "text", "text": random.choice(REPLIES)}]
+                tool_id = None
+                if random.random() < 0.6:
+                    tname, tinput = random.choice(TOOLCALLS)
+                    tool_id = f'toolu_{uuid.uuid4().hex[:12]}'
+                    content.append({"type": "tool_use", "id": tool_id, "name": tname, "input": tinput})
+                lines.append(J({"type": "assistant", "requestId": f'req_{uuid.uuid4().hex[:12]}',
+                    "message": {"id": msg_id, "role": "assistant", "model": model, "content": content, "usage": usage},
+                    "sessionId": sid, "timestamp": ats.strftime('%Y-%m-%dT%H:%M:%S.000Z')}))
+                # 工具返回（下一条 user 里的 tool_result）
+                if tool_id:
+                    lines.append(J({"type": "user", "message": {"role": "user", "content": [
+                        {"type": "tool_result", "tool_use_id": tool_id, "content": random.choice(RESULTS)}]},
+                        "sessionId": sid, "timestamp": (ats + timedelta(seconds=2)).strftime('%Y-%m-%dT%H:%M:%S.000Z')}))
+                # 记录最新会话首条 assistant，用于生成对齐抓包
+                if day_off == 0 and 'demo_capture' not in globals():
+                    globals()['demo_capture'] = {"sid": sid, "msg_id": msg_id, "model": model}
+            # 每轮耗时标记
+            lines.append(J({"type": "system", "subtype": "turn_duration", "durationMs": random.randint(30000, 400000),
+                "messageCount": random.randint(8, 40), "sessionId": sid, "timestamp": ts.strftime('%Y-%m-%dT%H:%M:%S.000Z')}))
         with open(f'{pdir}/{sid}.jsonl', 'w') as f: f.write('\n'.join(lines) + '\n')
 history.sort(key=lambda h: h['timestamp'])
 with open(f'{CD}/history.jsonl', 'w') as f:
     for h in history: f.write(json.dumps(h) + '\n')
+
+# ---------- 抓包记录（让 Inspector + 增强回放在 demo 数据上有内容）----------
+DEMO_SYSTEM = (
+    "You are Claude Code, Anthropic's official CLI for Claude.\n\n"
+    "You are an interactive agent that helps users with software engineering tasks.\n\n"
+    "# Tone and style\n"
+    "Be concise, direct, and to the point. Answer in fewer than 4 lines unless asked for detail.\n\n"
+    "# Following conventions\n"
+    "When making changes to files, first understand the file's code conventions. "
+    "Mimic code style, use existing libraries and utilities, and follow existing patterns.\n\n"
+    "# Doing tasks\n"
+    "Use the TodoWrite tool to plan the task if required. Use search tools to understand the codebase.\n"
+    "[... full system prompt captured live via the Inspector proxy ...]"
+)
+cap = globals().get('demo_capture')
+if cap:
+    rec = {
+        "id": 1, "ts": now.strftime('%Y-%m-%dT%H:%M:%S.000Z'), "path": "/v1/messages", "status": 200,
+        "durationMs": 8200, "model": cap["model"], "system": DEMO_SYSTEM,
+        "tools": ["Bash", "Read", "Edit", "Write", "Grep", "Glob", "TodoWrite", "Task", "WebFetch"],
+        "messagesCount": 12, "lastUser": "Add rate limiting to the public API gateway",
+        "respMsgId": cap["msg_id"], "userAgent": "claude-cli/2.1.4 (external, cli)", "clientVersion": "2.1.4",
+        "anthropicVersion": "2023-06-01", "betas": "context-1m-2025-08-07",
+        "outText": "I'll add a token-bucket rate limiter as gateway middleware. Let me check the existing structure first.",
+        "thinking": "The user wants rate limiting on the public API gateway. Let me think about the approach:\n\n1. A token-bucket limiter is the right fit here — smooth, allows bursts.\n2. It should live as middleware so every route inherits it.\n3. I need to check how the gateway is currently structured before writing code.\n\nLet me start by reading the gateway entry point.",
+        "usage": {"input_tokens": 4211, "output_tokens": 1876, "cache_read_input_tokens": 812004, "cache_creation_input_tokens": 24500},
+        "requestBytes": 48213, "responseBytes": 9204,
+    }
+    with open(f'{CD}/panel-captures.jsonl', 'w') as f: f.write(json.dumps(rec) + '\n')
+
 print(f'demo ready: {CD}\nsessions={sid_count} history_lines={len(history)}')

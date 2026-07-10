@@ -458,9 +458,14 @@ function knownProjects() {
 const encodeProject = p => p.replace(/[\/.]/g, '-');
 
 function listSessions() {
+  // 只列磁盘上仍有 transcript 的会话——这些才能查看详情/回放/关联抓包。
+  // Claude Code 约 30 天清理 transcript，但 history.jsonl 会长期保留，
+  // 若按 history 列会出现大量点开就 404 的“幽灵会话”。
+  const idToFile = new Map();
+  for (const fp of transcriptFiles().sessionFiles) idToFile.set(path.basename(fp, '.jsonl'), fp);
   const map = new Map();
   for (const e of readHistory()) {
-    if (!e.sessionId) continue;
+    if (!e.sessionId || !idToFile.has(e.sessionId)) continue;
     let s = map.get(e.sessionId);
     if (!s) {
       s = { id: e.sessionId, title: e.display || '', project: e.project || '', count: 0, first: e.timestamp || 0, last: e.timestamp || 0 };
@@ -471,31 +476,51 @@ function listSessions() {
     if (ts >= s.last) s.last = ts;
     if (ts < s.first) { s.first = ts; s.title = e.display || s.title; }
   }
-  return [...map.values()].sort((a, b) => b.last - a.last).slice(0, 200);
+  // transcript 存在但 history 没记标题的，用文件时间兜底
+  for (const [id, fp] of idToFile) {
+    if (map.has(id)) continue;
+    let mt = 0;
+    try { mt = fs.statSync(fp).mtimeMs; } catch {}
+    map.set(id, { id, title: id.slice(0, 8), project: '', count: 0, first: mt, last: mt });
+  }
+  return [...map.values()].sort((a, b) => b.last - a.last);
+}
+
+// 按 session id 找 transcript 文件路径（history 无记录时兜底）
+function transcriptPathFor(id) {
+  for (const fp of transcriptFiles().sessionFiles) {
+    if (path.basename(fp, '.jsonl') === id) return fp;
+  }
+  return '';
 }
 
 function sessionDetail(id, lang) {
   const prompts = readHistory().filter(e => e.sessionId === id);
-  if (!prompts.length) return null;
   prompts.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-  const project = prompts[0].project || '';
-  const transcript = project ? path.join(CLAUDE_DIR, 'projects', encodeProject(project), id + '.jsonl') : '';
+  let project = prompts[0] && prompts[0].project || '';
+  let transcript = project ? path.join(CLAUDE_DIR, 'projects', encodeProject(project), id + '.jsonl') : '';
+  if (!transcript || !fs.existsSync(transcript)) transcript = transcriptPathFor(id); // 兜底
+  if (!prompts.length && !transcript) return null; // 既无历史也无记录，才真不存在
   const hasTranscript = transcript && fs.existsSync(transcript);
   const fmtTime = ts => ts ? new Date(ts).toISOString().replace('T', ' ').slice(0, 16) : '?';
-  let md = `# ${prompts[0].display || id}\n\n`;
+  const title = (prompts[0] && prompts[0].display) || id;
+  const first = prompts[0], last = prompts[prompts.length - 1];
+  let md = `# ${title}\n\n`;
   md += `| ${T(lang, 'tblField')} | ${T(lang, 'tblValue')} |\n|---|---|\n`;
   md += `| Session ID | \`${id}\` |\n`;
   md += `| ${T(lang, 'sesProject')} | \`${project || '?'}\` |\n`;
-  md += `| ${T(lang, 'sesTime')} | ${fmtTime(prompts[0].timestamp)} → ${fmtTime(prompts[prompts.length - 1].timestamp)} |\n`;
+  if (first) md += `| ${T(lang, 'sesTime')} | ${fmtTime(first.timestamp)} → ${fmtTime(last.timestamp)} |\n`;
   md += `| ${T(lang, 'sesPromptCount')} | ${prompts.length} |\n`;
   md += `| ${T(lang, 'sesTranscript')} | ${hasTranscript ? '`' + transcript + '`' : T(lang, 'sesNoTranscript')} |\n`;
   md += `\n## ${T(lang, 'sesResume')}\n\n\`\`\`\ncd ${project || '~'} && claude --resume ${id}\n\`\`\`\n`;
-  md += `\n## ${T(lang, 'sesPrompts')}（${prompts.length}）\n\n`;
-  for (const p of prompts) {
-    const text = (p.display || '').replace(/\s+/g, ' ').slice(0, 200);
-    md += `- **${fmtTime(p.timestamp)}** ${text}\n`;
+  if (prompts.length) {
+    md += `\n## ${T(lang, 'sesPrompts')}（${prompts.length}）\n\n`;
+    for (const p of prompts) {
+      const text = (p.display || '').replace(/\s+/g, ' ').slice(0, 200);
+      md += `- **${fmtTime(p.timestamp)}** ${text}\n`;
+    }
   }
-  return { name: (prompts[0].display || id).slice(0, 60), path: hasTranscript ? transcript : T(lang, 'sesNoTranscript'), meta: {}, content: md, origin: 'user', session: true };
+  return { name: title.slice(0, 60), path: hasTranscript ? transcript : T(lang, 'sesNoTranscript'), meta: {}, content: md, origin: 'user', session: true, hasTranscript };
 }
 
 // 用量统计：与 ccusage 同源 —— 直接扫描 ~/.claude/projects/**/*.jsonl 的 assistant 消息 usage，
@@ -759,10 +784,10 @@ function searchTranscripts(q) {
 // ---------- 会话回放 ----------
 function sessionReplay(id) {
   const prompts = readHistory().filter(e => e.sessionId === id);
-  const project = prompts[0] && prompts[0].project;
-  if (!project) return null;
-  const fp = path.join(CLAUDE_DIR, 'projects', encodeProject(project), id + '.jsonl');
-  if (!fs.existsSync(fp)) return null;
+  const project = (prompts[0] && prompts[0].project) || '';
+  let fp = project ? path.join(CLAUDE_DIR, 'projects', encodeProject(project), id + '.jsonl') : '';
+  if (!fp || !fs.existsSync(fp)) fp = transcriptPathFor(id); // 兜底：按 id 直接找
+  if (!fp || !fs.existsSync(fp)) return null;
   const raw = fs.readFileSync(fp, 'utf8').split('\n');
   // 第一遍：收集 tool_result（在后续 user 行里，按 tool_use_id 配对）
   const toolResults = new Map();

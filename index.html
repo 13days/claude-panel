@@ -550,7 +550,7 @@ async function openItem(key, displayName) {
     $('#delBtn').disabled = !caps.del || readonlyCmd;
     setEditMode(false);
     renderDoc(d);
-    if (state.type === 'sessions' && d.session) {
+    if (state.type === 'sessions' && d.session && d.hasTranscript) {
       const box = document.createElement('div');
       box.style.cssText = 'margin:0 0 18px;padding:14px 16px;border:1px solid rgba(217,123,79,.4);border-radius:12px;background:rgba(217,123,79,.08)';
       const rb = document.createElement('button');
