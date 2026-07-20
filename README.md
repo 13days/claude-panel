@@ -32,6 +32,12 @@ Open a session, expand a query, and you get **"🔁 This query triggered N LLM r
 
 Set it up once — the panel wires a smart `claude` wrapper into your shell automatically on first run (routes through the proxy when the panel is up, connects directly when it's off, never breaks). API keys are never recorded; everything stays on `127.0.0.1`.
 
+## 🚢 Your sessions are a voyage
+
+Hundreds of sessions aren't a mess — they're the log of your work. The **Voyage** tab renders them as one continuous timeline: a river colored by project (height = conversation turns), and storyline "legs" — each continuous stretch of work labeled by the intent you opened it with. All local, from `history.jsonl`.
+
+![voyage](https://raw.githubusercontent.com/13days/claude-panel/main/docs/11-voyage.png)
+
 ## Features
 
 | Section | What you get |
@@ -43,6 +49,7 @@ Set it up once — the panel wires a smart `claude` wrapper into your shell auto
 | **Sessions** | Every session that still has a transcript — full-text search across all of them, chat-style **replay**, and one-click `claude --resume` |
 | **🕵️ Inspector** | Local reverse proxy capturing live traffic: system prompt, tool defs, full context, streamed response incl. thinking, Claude Code version. Persisted to disk, folded into replays |
 | **Stats** | `ccusage`-accurate usage: daily messages, per-model tokens, 24h heatline, `ccusage daily`-style cost table, and a live ticker (today's spend, burn rate, budget alerts) |
+| **🚢 Voyage** | Reframes your scattered sessions as one timeline — a river of your work colored by project, split into storyline "legs" labeled by their opening intent. See how the ark is steered and where it's heading |
 | **🎁 Wrapped** | One-click shareable PNG stats card with spend, tokens, top command, favorite model and an earned badge |
 
 Cross-cutting:
