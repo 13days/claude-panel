@@ -478,6 +478,71 @@ function knownProjects() {
 // 项目路径 → ~/.claude/projects/ 下的目录名
 const encodeProject = p => p.replace(/[\/.]/g, '-');
 
+// ---------- 航程 Voyage：把散乱的会话织成一条时间线 + 故事线 ----------
+// 纯本地启发式，全部来自 history.jsonl（长期保留，比 transcript 完整）。
+function voyageData() {
+  const hasT = new Set([...transcriptFiles().sessionFiles].map(fp => path.basename(fp, '.jsonl')));
+  const map = new Map();
+  for (const e of readHistory()) {
+    if (!e.sessionId || !e.timestamp) continue;
+    let s = map.get(e.sessionId);
+    if (!s) { s = { id: e.sessionId, project: e.project || '', title: e.display || '', prompts: 0, start: e.timestamp, end: e.timestamp }; map.set(e.sessionId, s); }
+    s.prompts++;
+    if (e.timestamp < s.start) { s.start = e.timestamp; if (e.display) s.title = e.display; }
+    if (e.timestamp > s.end) s.end = e.timestamp;
+  }
+  const sessions = [...map.values()].sort((a, b) => a.start - b.start).map(s => ({
+    id: s.id, proj: s.project ? s.project.split('/').pop() : '(unknown)',
+    title: (s.title || s.id).slice(0, 120), prompts: s.prompts, start: s.start, end: s.end,
+    hasTranscript: hasT.has(s.id),
+  }));
+  if (!sessions.length) return { span: null, totalSessions: 0, activeDays: 0, projects: [], days: [], storylines: [] };
+
+  // 项目稳定配色（按首次出现顺序）
+  const projOrder = [];
+  for (const s of sessions) if (!projOrder.includes(s.proj)) projOrder.push(s.proj);
+
+  // 时间之河：按天聚合
+  const byDay = {};
+  for (const s of sessions) {
+    const d = localDay(new Date(s.start));
+    (byDay[d] ||= { date: d, sessions: [] }).sessions.push({ id: s.id, proj: s.proj, title: s.title, prompts: s.prompts, hasTranscript: s.hasTranscript });
+  }
+  const days = Object.values(byDay).sort((a, b) => a.date.localeCompare(b.date));
+
+  // 故事线（航段）：同项目内按时间断点(>2天)切分成连续作业段
+  const GAP = 2 * 86400e3;
+  const byProj = {};
+  for (const s of sessions) (byProj[s.proj] ||= []).push(s);
+  const storylines = [];
+  for (const [proj, list] of Object.entries(byProj)) {
+    list.sort((a, b) => a.start - b.start);
+    let leg = null;
+    for (const s of list) {
+      if (!leg || s.start - leg.end > GAP) { leg = { proj, sessions: [], start: s.start, end: s.end }; storylines.push(leg); }
+      leg.sessions.push({ id: s.id, title: s.title, start: s.start, prompts: s.prompts, hasTranscript: s.hasTranscript });
+      leg.end = Math.max(leg.end, s.end);
+    }
+  }
+  for (const l of storylines) {
+    l.sessionCount = l.sessions.length;
+    l.promptCount = l.sessions.reduce((n, x) => n + x.prompts, 0);
+    l.days = Math.max(1, Math.round((l.end - l.start) / 86400e3) + 1);
+    l.from = localDay(new Date(l.start)); l.to = localDay(new Date(l.end));
+    l.title = l.sessions[0].title; // 首程 = 这段航行的起点意图
+  }
+  storylines.sort((a, b) => b.end - a.end);
+
+  return {
+    span: { from: days[0].date, to: days[days.length - 1].date },
+    totalSessions: sessions.length,
+    activeDays: days.length,
+    projects: projOrder,
+    days,
+    storylines: storylines.slice(0, 80),
+  };
+}
+
 function listSessions() {
   // 只列磁盘上仍有 transcript 的会话——这些才能查看详情/回放/关联抓包。
   // Claude Code 约 30 天清理 transcript，但 history.jsonl 会长期保留，
@@ -1466,6 +1531,11 @@ const server = http.createServer(async (req, res) => {
     // ---- 项目列表 ----
     if (type === 'projects' && req.method === 'GET') {
       return sendJSON(res, 200, { items: knownProjects().map(p => ({ path: p, name: path.basename(p) })) });
+    }
+
+    // ---- 航程 Voyage ----
+    if (type === 'voyage' && req.method === 'GET') {
+      return sendJSON(res, 200, voyageData());
     }
 
     // ---- 统计 ----

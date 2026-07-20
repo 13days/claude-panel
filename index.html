@@ -46,6 +46,29 @@
   #toBottom:hover { border-color: var(--accent); background: var(--accent); color: #fff; }
   #tip { position: fixed; display: none; background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 8px; font-size: 12px; pointer-events: none; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,.5); white-space: nowrap; font-family: ui-monospace, monospace; }
 
+  /* ---------- 航程 Voyage ---------- */
+  .voyage-hero { font-size: 15px; line-height: 1.9; margin-bottom: 18px; color: var(--text); }
+  .voyage-hero b { color: var(--accent2); font-size: 19px; font-family: ui-monospace, monospace; }
+  .river { display: flex; align-items: flex-end; gap: 3px; height: 150px; overflow-x: auto; padding: 20px 4px 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; }
+  .river .daycol { display: flex; flex-direction: column-reverse; gap: 2px; min-width: 12px; flex: 0 0 auto; cursor: default; }
+  .river .seg { width: 12px; min-height: 4px; border-radius: 2px; }
+  .river .daycol:hover .seg { outline: 1px solid rgba(255,255,255,.35); }
+  .river-axis { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--muted); margin: 6px 2px 0; }
+  .legdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }
+  .leg { border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; overflow: hidden; }
+  .leg > summary { cursor: pointer; padding: 11px 14px; font-size: 13.5px; list-style: none; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .leg > summary::-webkit-details-marker { display: none; }
+  .leg > summary:hover { background: var(--panel2); }
+  .leg .leg-title { font-weight: 600; }
+  .leg .leg-meta { color: var(--muted); font-size: 12px; font-family: ui-monospace, monospace; margin-left: auto; }
+  .leg-sessions { padding: 4px 14px 12px 30px; }
+  .leg-sess { padding: 6px 0; border-top: 1px solid var(--border); cursor: pointer; font-size: 12.5px; display: flex; gap: 10px; }
+  .leg-sess:hover { color: var(--accent2); }
+  .leg-sess .ls-date { color: var(--muted); font-family: ui-monospace, monospace; white-space: nowrap; }
+  .leg-sess .ls-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .leg-sess .ls-ghost { color: var(--muted); opacity: .6; }
+  .proj-legend { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 12px 0 20px; font-size: 11.5px; color: var(--muted); }
+
   /* ---------- Live 实时条 ---------- */
   #liveBar { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; font-size: 13px; }
   #liveBar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 1.6s infinite; }
@@ -190,6 +213,7 @@
     <div class="tab" data-type="workflows">工作流<span class="cnt"></span></div>
     <div class="tab" data-type="inspector">抓包<span class="cnt"></span></div>
     <div class="tab" data-type="sessions">会话<span class="cnt"></span></div>
+    <div class="tab" data-type="voyage">航程<span class="cnt"></span></div>
     <div class="tab" data-type="stats">统计<span class="cnt"></span></div>
   </div>
   <div id="projbar"><select id="projSel"></select></div>
@@ -267,8 +291,8 @@ const LANGS = [
 const DEFAULT_LANG = 'zh';
 const I18N = {
   zh: {
-    tabs: { commands: '/ 命令', skills: '技能', agents: '智能体', plugins: '插件', config: '配置', workflows: '工作流', inspector: '抓包', sessions: '会话', stats: '统计' },
-    typeLabel: { commands: '命令', skills: '技能', agents: '智能体', plugins: '插件', config: '配置', workflows: '工作流', inspector: '请求', sessions: '会话', stats: '统计' },
+    tabs: { commands: '/ 命令', skills: '技能', agents: '智能体', plugins: '插件', config: '配置', workflows: '工作流', inspector: '抓包', sessions: '会话', voyage: '航程', stats: '统计' },
+    typeLabel: { commands: '命令', skills: '技能', agents: '智能体', plugins: '插件', config: '配置', workflows: '工作流', inspector: '请求', sessions: '会话', voyage: '航程', stats: '统计' },
     search: '搜索名称 / 描述…', mineOnly: '仅自建', all: '全部',
     newBtn: '＋ 新建', edit: '编辑', save: '保存', cancel: '取消', del: '删除', uninstall: '卸载', create: '创建',
     noSelection: '未选择', emptyHint: '← 从左侧选择一个资源，或点击「新建」',
@@ -297,6 +321,7 @@ const I18N = {
     wDaysUnit: '天', wDownload: '下载 PNG', wR7: '过去 7 天', wR30: '过去 30 天',
     bNight: '🦉 深夜码农', bBurner: '🔥 Token 燃烧机', bStreak: '⚡ 连肝选手', bShip: '🚀 稳定输出',
     searchSessionsPh: '搜标题；回车全文搜索会话内容…', srNone: '没有找到匹配的会话内容',
+        voyageHero: '🚢 你的方舟已航行 {days} 天,停靠 {projects} 个项目港,{active} 天在掌舵,留下 {sessions} 段航迹。', voyageRiver: '时间之河（每列一天,色块=会话,高度=对话轮数,点击进入）', voyageLegs: '航段 · 你的每一程连续作业', voyageLegMeta: '{s} 会话 / {d} 天', voyageSessUnit: '会话', voyageEmpty: '还没有航迹', 
     replayBtn: '▶ 完整回放 · 系统提示词 · 思考 · 工具轨迹', replayBack: '← 返回会话详情', replayTruncated: '（会话过长，仅显示前 400 轮）',
     replayThinking: '💭 思考过程', replayInput: '输入', replayResult: '返回结果', replayTurnMeta: '本轮耗时 {s} 秒 · {n} 条消息',
         replaySub: '一次生成的完整 trace：用户消息、思考过程、每次工具调用的输入与返回。若该会话经过 Inspector 代理，还会带上真实系统提示词和客户端版本。', replayCaptured: '本会话已被 Inspector 抓取 · Claude Code {v} · 下方为真实系统提示词与思考', 
@@ -320,8 +345,8 @@ const I18N = {
     },
   },
   en: {
-    tabs: { commands: '/ Commands', skills: 'Skills', agents: 'Agents', plugins: 'Plugins', config: 'Config', workflows: 'Workflows', inspector: 'Inspector', sessions: 'Sessions', stats: 'Stats' },
-    typeLabel: { commands: 'command', skills: 'skill', agents: 'agent', plugins: 'plugin', config: 'config', workflows: 'workflow', inspector: 'request', sessions: 'session', stats: 'stats' },
+    tabs: { commands: '/ Commands', skills: 'Skills', agents: 'Agents', plugins: 'Plugins', config: 'Config', workflows: 'Workflows', inspector: 'Inspector', sessions: 'Sessions', voyage: 'Voyage', stats: 'Stats' },
+    typeLabel: { commands: 'command', skills: 'skill', agents: 'agent', plugins: 'plugin', config: 'config', workflows: 'workflow', inspector: 'request', sessions: 'session', voyage: 'voyage', stats: 'stats' },
     search: 'Search name / description…', mineOnly: 'Mine', all: 'All',
     newBtn: '＋ New', edit: 'Edit', save: 'Save', cancel: 'Cancel', del: 'Delete', uninstall: 'Uninstall', create: 'Create',
     noSelection: 'Nothing selected', emptyHint: '← Pick an item on the left, or click "New"',
@@ -350,6 +375,7 @@ const I18N = {
     wDaysUnit: 'days', wDownload: 'Download PNG', wR7: 'Last 7 days', wR30: 'Last 30 days',
     bNight: '🦉 Night Owl', bBurner: '🔥 Token Burner', bStreak: '⚡ On a Streak', bShip: '🚀 Steady Shipper',
     searchSessionsPh: 'Filter titles; press Enter for full-text search…', srNone: 'No matching session content',
+        voyageHero: '🚢 Your ark has sailed {days} days across {projects} project ports, {active} days at the helm, leaving {sessions} tracks.', voyageRiver: 'River of time (one column per day, blocks = sessions, height = turns, click to open)', voyageLegs: 'Legs · each continuous stretch of work', voyageLegMeta: '{s} sessions / {d} days', voyageSessUnit: 'sessions', voyageEmpty: 'No voyage yet', 
     replayBtn: '▶ Full replay · system prompt · thinking · tools', replayBack: '← Back to session', replayTruncated: '(long session, first 400 turns shown)',
     replayThinking: '💭 Thinking', replayInput: 'Input', replayResult: 'Result', replayTurnMeta: 'Turn took {s}s · {n} messages',
         replaySub: 'The full generation trace: user messages, thinking, and every tool call with its input and result. If this session went through the Inspector proxy, the real system prompt and client version are included too.', replayCaptured: 'Captured by Inspector · Claude Code {v} · real system prompt & thinking below', 
@@ -373,8 +399,8 @@ const I18N = {
     },
   },
   ja: {
-    tabs: { commands: '/ コマンド', skills: 'スキル', agents: 'エージェント', plugins: 'プラグイン', config: '設定', workflows: 'ワークフロー', inspector: 'キャプチャ', sessions: 'セッション', stats: '統計' },
-    typeLabel: { commands: 'コマンド', skills: 'スキル', agents: 'エージェント', plugins: 'プラグイン', config: '設定', workflows: 'ワークフロー', inspector: 'リクエスト', sessions: 'セッション', stats: '統計' },
+    tabs: { commands: '/ コマンド', skills: 'スキル', agents: 'エージェント', plugins: 'プラグイン', config: '設定', workflows: 'ワークフロー', inspector: 'キャプチャ', sessions: 'セッション', voyage: '航海', stats: '統計' },
+    typeLabel: { commands: 'コマンド', skills: 'スキル', agents: 'エージェント', plugins: 'プラグイン', config: '設定', workflows: 'ワークフロー', inspector: 'リクエスト', sessions: 'セッション', voyage: '航海', stats: '統計' },
     search: '名前 / 説明を検索…', mineOnly: '自作のみ', all: 'すべて',
     newBtn: '＋ 新規', edit: '編集', save: '保存', cancel: 'キャンセル', del: '削除', uninstall: 'アンインストール', create: '作成',
     noSelection: '未選択', emptyHint: '← 左からアイテムを選択、または「新規」をクリック',
@@ -403,6 +429,7 @@ const I18N = {
     wDaysUnit: '日', wDownload: 'PNG をダウンロード', wR7: '過去7日間', wR30: '過去30日間',
     bNight: '🦉 夜型エンジニア', bBurner: '🔥 トークンバーナー', bStreak: '⚡ 連続作業の達人', bShip: '🚀 安定稼働',
     searchSessionsPh: 'タイトル検索；Enter で全文検索…', srNone: '一致するセッション内容がありません',
+        voyageHero: '🚢 あなたの方舟は {days} 日間航海し、{projects} のプロジェクト港に寄港、{active} 日操舵し、{sessions} の航跡を残しました。', voyageRiver: '時の川（1列=1日、ブロック=セッション、高さ=ターン数、クリックで開く）', voyageLegs: '航路区間 · 連続作業ごと', voyageLegMeta: '{s} セッション / {d} 日', voyageSessUnit: 'セッション', voyageEmpty: 'まだ航海がありません', 
     replayBtn: '▶ フル再生 · システムプロンプト · 思考 · ツール', replayBack: '← セッション詳細に戻る', replayTruncated: '（長いセッションのため先頭400ターンのみ表示）',
     replayThinking: '💭 思考プロセス', replayInput: '入力', replayResult: '結果', replayTurnMeta: 'このターン {s} 秒 · {n} メッセージ',
         replaySub: '生成の完全トレース：ユーザーメッセージ、思考、各ツール呼び出しの入力と結果。Inspector プロキシ経由のセッションなら実際のシステムプロンプトとクライアントバージョンも含みます。', replayCaptured: 'Inspector が捕捉 · Claude Code {v} · 実際のシステムプロンプトと思考は下記', 
@@ -441,6 +468,7 @@ const CAPS = {
   workflows: { new: true, edit: true, del: true, filter: false },
   inspector: { new: false, edit: false, del: false, filter: false },
   sessions: { new: false, edit: false, del: false, filter: false },
+  voyage:   { new: false, edit: false, del: false, filter: false, dashboard: true },
   stats:    { new: false, edit: false, del: false, filter: false, dashboard: true },
 };
 // 支持项目作用域的专区
@@ -496,6 +524,7 @@ async function switchType(type) {
   $('#filterbar').style.display = CAPS[type].filter ? 'flex' : 'none';
   $('#delBtn').textContent = type === 'plugins' ? t('uninstall') : t('del');
   showEmpty();
+  if (type === 'voyage') { await renderVoyage(); return; }
   if (CAPS[type].dashboard) { await renderStatsTab(); return; }
   if (type === 'inspector') startInspectorPoll(); else stopInspectorPoll();
   const { items } = await api('GET', type);
@@ -908,6 +937,75 @@ $('#importFile').onchange = async e => {
   } catch (err) { toast(t('loadFail') + err.message, false); }
   e.target.value = '';
 };
+
+// ---------- 航程 Voyage ----------
+async function renderVoyage() {
+  try {
+    const d = await api('GET', 'voyage');
+    $('#empty').style.display = 'none';
+    $('#title').firstChild.textContent = t('tabs')['voyage'];
+    $('#fpath').textContent = '~/.claude/history.jsonl';
+    $('#editBtn').disabled = $('#delBtn').disabled = true;
+    setEditMode(false);
+    $('#metabar').style.display = 'none';
+    $('#render').style.display = 'block';
+    $('#render').classList.add('wide');
+    $('#render').innerHTML = voyageHTML(d);
+    // 河流默认滚到最右（最近）
+    const river = $('#river'); if (river) river.scrollLeft = river.scrollWidth;
+    // 绑定点击：河流节点 + 故事线里的会话 → 打开会话
+    $('#render').querySelectorAll('[data-sid]').forEach(el => {
+      el.onclick = () => { state.type = 'sessions'; openItem(el.dataset.sid); };
+    });
+  } catch (e) { toast(t('loadFail') + e.message, false); }
+}
+
+const projColor = (proj, projects) => CHART_COLORS[Math.max(0, projects.indexOf(proj)) % CHART_COLORS.length];
+
+function voyageHTML(d) {
+  if (!d.span) return `<p style="color:var(--muted)">${esc(t('voyageEmpty'))}</p>`;
+  const spanDays = Math.round((new Date(d.span.to) - new Date(d.span.from)) / 86400e3) + 1;
+  let h = `<div class="voyage-hero">${fmt(t('voyageHero'), {
+    days: `<b>${spanDays}</b>`, sessions: `<b>${d.totalSessions}</b>`,
+    projects: `<b>${d.projects.length}</b>`, active: `<b>${d.activeDays}</b>`,
+  })}<br><span style="color:var(--muted);font-size:12.5px">${esc(d.span.from)} → ${esc(d.span.to)}</span></div>`;
+
+  // 项目图例
+  h += '<div class="proj-legend">' + d.projects.slice(0, 12).map(p =>
+    `<span><span class="legdot" style="background:${projColor(p, d.projects)}"></span>${esc(p)}</span>`).join('') + '</div>';
+
+  // 时间之河：每天一列，堆叠该天各会话（按 prompt 数定高、按项目着色）
+  h += `<h3 style="font-size:13.5px;margin:6px 0 8px;color:var(--accent2)">🌊 ${esc(t('voyageRiver'))}</h3>`;
+  h += '<div class="river" id="river">';
+  for (const day of d.days) {
+    let col = `<div class="daycol" title="${esc(day.date)} · ${day.sessions.length} ${t('voyageSessUnit')}">`;
+    for (const s of day.sessions) {
+      const ht = Math.min(60, 6 + s.prompts * 3);
+      col += `<div class="seg" data-sid="${esc(s.id)}" style="height:${ht}px;background:${projColor(s.proj, d.projects)};cursor:pointer" title="${esc(s.title)}"></div>`;
+    }
+    h += col + '</div>';
+  }
+  h += '</div>';
+  h += `<div class="river-axis"><span>${esc(d.span.from)}</span><span>${esc(d.span.to)} →</span></div>`;
+
+  // 故事线（航段）
+  h += `<h3 style="font-size:13.5px;margin:22px 0 8px;color:var(--accent2)">🚩 ${esc(t('voyageLegs'))}</h3>`;
+  for (const l of d.storylines) {
+    h += `<details class="leg"><summary>
+      <span class="legdot" style="background:${projColor(l.proj, d.projects)}"></span>
+      <span class="leg-title">${esc(l.title)}</span>
+      <span class="leg-meta">${esc(l.proj)} · ${l.from}→${l.to} · ${fmt(t('voyageLegMeta'), { s: l.sessionCount, d: l.days })}</span>
+    </summary><div class="leg-sessions">`;
+    for (const s of l.sessions) {
+      h += `<div class="leg-sess" data-sid="${esc(s.id)}">
+        <span class="ls-date">${new Date(s.start).toISOString().slice(5, 10)}</span>
+        <span class="ls-title${s.hasTranscript ? '' : ' ls-ghost'}">${esc(s.title)}${s.hasTranscript ? '' : ' ·(无记录)'}</span>
+      </div>`;
+    }
+    h += '</div></details>';
+  }
+  return h;
+}
 
 // ---------- Inspector 抓包 ----------
 let _insTimer = null, _insProxyPort = 0;
