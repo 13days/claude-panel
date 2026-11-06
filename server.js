@@ -1490,6 +1490,10 @@ const server = http.createServer(async (req, res) => {
   if (scope && !knownProjects().includes(scope)) scope = '';
 
   try {
+    if (url.pathname === '/panel.css' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8', 'Cache-Control': 'no-cache' });
+      return res.end(fs.readFileSync(path.join(__dirname, 'panel.css')));
+    }
     if (parts[0] !== 'api') {
       // 静态页面
       const html = fs.readFileSync(path.join(__dirname, 'index.html'));

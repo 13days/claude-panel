@@ -5,270 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Claude Panel</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23d97b4f'/%3E%3Cpath d='m17 20 13 12-13 12M35 44h13' fill='none' stroke='%23171a21' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-<style>
-  :root {
-    --bg: #0f1115; --panel: #171a21; --panel2: #1d212b; --border: #2a2f3a;
-    --text: #e6e9ef; --muted: #8b93a5; --accent: #d97b4f; --accent2: #e8965f;
-    --danger: #e05d5d; --green: #4fae7a; --code-bg: #12141a;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; }
-
-  /* ---------- 侧栏 ---------- */
-  #sidebar { width: 300px; min-width: 300px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
-  #logo { padding: 18px 16px 12px; font-size: 17px; font-weight: 700; letter-spacing: .5px; display: flex; align-items: center; }
-  #logo span { color: var(--accent); margin-left: 4px; }
-  #langSel { padding: 6px 8px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font-size: 12.5px; cursor: pointer; outline: none; }
-  #langSel:hover, #langSel:focus { border-color: var(--accent); }
-  #route-form input, #route-form textarea, #route-form select, #route-mode { padding: 9px 11px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font: inherit; min-width: 0; }
-  #route-form input:focus, #route-form textarea:focus, #route-form select:focus, #route-mode:focus { outline: 1px solid var(--accent); }
-  #route-form textarea { display: block; margin-top: 8px; resize: vertical; font-family: ui-monospace, monospace; }
-  #route-form summary { cursor: pointer; color: var(--accent2); }
-  #route-accounts p { overflow-wrap: anywhere; }
-  #route-notice { color: var(--green); overflow-wrap: anywhere; }
-  .route-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
-  #render .route-heading h2, #render .route-heading h3 { margin: 0; }
-  .route-muted { color: var(--muted); font-size: 13px; }
-  .route-connect { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 24px; }
-  #render .route-connect h3 { margin: 0 0 8px; font-size: 17px; }
-  .route-connect > .btn { flex-shrink: 0; padding: 11px 24px; }
-  .route-controls { margin-top: 30px; margin-bottom: 14px; }
-  .route-account { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
-  .route-account.is-active { border-color: var(--accent); background: rgba(217,123,79,.045); }
-  .route-account-main { min-width: 0; }
-  .route-account-title, .route-account-actions { display: flex; align-items: center; gap: 10px; }
-  #render .route-account h3 { margin: 0; font-size: 16px; }
-  .route-account-actions { flex-shrink: 0; }
-  .route-badge { display: inline-block; font-size: 12px; color: var(--green); background: rgba(79,174,122,.1); border-radius: 20px; padding: 3px 10px; white-space: nowrap; }
-  .route-badge.is-muted { color: var(--muted); background: var(--panel2); }
-  .route-empty { padding: 42px 20px; text-align: center; border: 1px dashed var(--border); border-radius: 12px; }
-  #render .route-empty h3 { margin-top: 0; }
-  .route-more { position: relative; }
-  .route-more > summary { cursor: pointer; list-style: none; padding: 6px 10px; color: var(--muted); }
-  .route-more > div { position: absolute; right: 0; top: 100%; z-index: 5; display: grid; gap: 6px; min-width: 160px; padding: 10px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px #0005; }
-  .route-foot { display: flex; align-items: center; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
-  .route-foot > span { flex: 1; }
-  #route-dialog { margin: auto; width: min(560px, calc(100vw - 32px)); max-height: 90vh; overflow-y: auto; padding: 28px; border: 1px solid var(--border); border-radius: 16px; background: var(--panel); color: var(--text); box-shadow: 0 24px 80px #0008; }
-  #route-dialog::backdrop { background: #0009; backdrop-filter: blur(3px); }
-  #route-form { display: grid; gap: 18px; }
-  #route-form .route-heading { margin: 0; }
-  #route-form label { display: block; font-size: 13px; }
-  #route-form input, #route-form textarea, #route-form select { display: block; width: 100%; margin-top: 7px; }
-  #route-form details { font-size: 13px; }
-  #route-form details label { margin-top: 16px; }
-  #route-parse { margin-top: 10px; }
-  .route-dialog-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .route-paste-title { font-weight: 600; }
-  #route-preview { padding: 10px 12px; border: 1px solid rgba(79,174,122,.3); border-radius: 8px; color: var(--green); background: rgba(79,174,122,.06); font-size: 12px; overflow-wrap: anywhere; }
-  .route-or { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 12px; }
-  .route-or::before, .route-or::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
-  #route-example { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
-  #route-example pre { font-size: 11px; background: var(--code-bg); padding: 12px; border-radius: 8px; margin: 10px 0; overflow-x: auto; white-space: pre-wrap; }
-  #route-env { font-size: 12px !important; }
-  #route-form-error { color: var(--danger); font-size: 13px; }
-  #route-form-error:empty, #route-notice:empty { display: none; }
-  #route-notice:not(:empty) { padding: 16px 20px; margin: 16px 0; background: rgba(79,174,122,.08); border-radius: 10px; }
-  #route-notice details { color: var(--muted); font-size: 12px; }
-  @media (max-width: 900px) { .route-account, .route-connect, .route-controls { align-items: flex-start; flex-direction: column; } .route-account-actions { width: 100%; } }
-
-  #tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 12px; }
-  .tab { flex: 1 1 28%; text-align: center; padding: 7px 0; border-radius: 8px; cursor: pointer; font-size: 13px; color: var(--muted); background: var(--panel2); border: 1px solid transparent; user-select: none; white-space: nowrap; }
-  .tab.active { color: var(--text); border-color: var(--accent); background: rgba(217,123,79,.12); }
-  .tab .cnt { font-size: 11px; opacity: .75; margin-left: 3px; }
-  #searchbox { padding: 0 12px 10px; }
-  #search { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font-size: 13px; outline: none; }
-  #search:focus { border-color: var(--accent); }
-  #projbar { padding: 0 12px 10px; }
-  #projSel { width: 100%; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font-size: 12.5px; outline: none; cursor: pointer; }
-  #projSel:hover, #projSel:focus { border-color: var(--accent); }
-
-  /* ---------- 统计仪表盘 ---------- */
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
-  .card .v { font-size: 23px; font-weight: 700; }
-  .card .k { font-size: 12px; color: var(--muted); margin-top: 4px; }
-  .chart { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
-  .chart h3 { font-size: 13.5px; margin: 0 0 14px; }
-  .chartHead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 8px; }
-  .chartHead h3 { margin: 0; }
-  .range { display: flex; gap: 4px; }
-  .rangebtn { padding: 3px 10px; border-radius: 14px; font-size: 11.5px; color: var(--muted); background: var(--panel2); border: 1px solid var(--border); cursor: pointer; }
-  .rangebtn.active { color: var(--text); border-color: var(--accent); background: rgba(217,123,79,.12); }
-  #toBottom { position: fixed; right: 28px; bottom: 28px; width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font-size: 18px; cursor: pointer; display: none; z-index: 90; box-shadow: 0 4px 16px rgba(0,0,0,.5); }
-  #toBottom:hover { border-color: var(--accent); background: var(--accent); color: #fff; }
-  #tip { position: fixed; display: none; background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 8px; font-size: 12px; pointer-events: none; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,.5); white-space: nowrap; font-family: ui-monospace, monospace; }
-
-  /* ---------- 航程 Voyage ---------- */
-  .voyage-hero { font-size: 15px; line-height: 1.9; margin-bottom: 18px; color: var(--text); }
-  .voyage-hero b { color: var(--accent2); font-size: 19px; font-family: ui-monospace, monospace; }
-  .river { display: flex; align-items: flex-end; gap: 3px; height: 150px; overflow-x: auto; padding: 20px 4px 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; }
-  .river .daycol { display: flex; flex-direction: column-reverse; gap: 2px; min-width: 12px; flex: 0 0 auto; cursor: default; }
-  .river .seg { width: 12px; min-height: 4px; border-radius: 2px; }
-  .river .daycol:hover .seg { outline: 1px solid rgba(255,255,255,.35); }
-  .river-axis { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--muted); margin: 6px 2px 0; }
-  .legdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }
-  .leg { border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; overflow: hidden; }
-  .leg > summary { cursor: pointer; padding: 11px 14px; font-size: 13.5px; list-style: none; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-  .leg > summary::-webkit-details-marker { display: none; }
-  .leg > summary:hover { background: var(--panel2); }
-  .leg .leg-title { font-weight: 600; }
-  .leg .leg-meta { color: var(--muted); font-size: 12px; font-family: ui-monospace, monospace; margin-left: auto; }
-  .leg-sessions { padding: 4px 14px 12px 30px; }
-  .leg-sess { padding: 6px 0; border-top: 1px solid var(--border); cursor: pointer; font-size: 12.5px; display: flex; gap: 10px; }
-  .leg-sess:hover { color: var(--accent2); }
-  .leg-sess .ls-date { color: var(--muted); font-family: ui-monospace, monospace; white-space: nowrap; }
-  .leg-sess .ls-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-  .leg-sess .ls-ghost { color: var(--muted); opacity: .6; }
-  .proj-legend { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 12px 0 20px; font-size: 11.5px; color: var(--muted); }
-
-  /* ---------- Live 实时条 ---------- */
-  #liveBar { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; font-size: 13px; }
-  #liveBar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 1.6s infinite; }
-  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
-  #liveBar b { font-size: 17px; font-family: ui-monospace, monospace; }
-  #liveBar .lv { color: var(--muted); }
-  #liveBar.over { border-color: var(--danger); }
-  #liveBar.over b.cost { color: var(--danger); }
-  #liveBar input { width: 76px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font-size: 12px; outline: none; }
-
-  /* ---------- 会话回放 ---------- */
-  .bubble { max-width: 78%; margin: 10px 0; padding: 10px 14px; border-radius: 14px; font-size: 13.5px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
-  .bubble.user { margin-left: auto; background: rgba(217,123,79,.16); border: 1px solid rgba(217,123,79,.35); border-bottom-right-radius: 4px; }
-  .bubble.assistant { margin-right: auto; background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
-  .bubble .bts { font-size: 10.5px; color: var(--muted); margin-bottom: 4px; font-family: ui-monospace, monospace; }
-  .bubble .mdbody { white-space: normal; }
-  .bubble .mdbody > :first-child { margin-top: 0; }
-  .bubble .mdbody > :last-child { margin-bottom: 0; }
-  .bubble .mdbody p { margin: 6px 0; }
-  .bubble .mdbody ul, .bubble .mdbody ol { margin: 6px 0 6px 22px; }
-  .bubble .mdbody code { background: var(--code-bg); border: 1px solid var(--border); padding: 1px 5px; border-radius: 5px; font-family: ui-monospace, monospace; font-size: 12px; }
-  .bubble .mdbody pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; overflow-x: auto; margin: 8px 0; }
-  .bubble .mdbody pre code { background: none; border: none; padding: 0; }
-  .bubble .mdbody h1, .bubble .mdbody h2, .bubble .mdbody h3 { font-size: 15px; margin: 10px 0 6px; }
-  .bubble details { margin-top: 6px; font-size: 12px; }
-  .bubble details summary { cursor: pointer; color: var(--accent2); font-family: ui-monospace, monospace; }
-  .bubble details pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-top: 6px; overflow-x: auto; font-size: 11.5px; white-space: pre-wrap; }
-  #replayWrap { max-width: 920px; display: flex; flex-direction: column; }
-  .bubble details.thinking summary { color: #9085e9; }
-  .bubble details.thinking pre { color: #a99ff0; font-style: italic; background: rgba(144,133,233,.06); border-color: rgba(144,133,233,.3); }
-  .bubble .tlabel { font-size: 10.5px; color: var(--muted); margin-top: 6px; text-transform: uppercase; letter-spacing: .5px; }
-  .turn-meta { text-align: center; color: var(--muted); font-size: 11px; margin: 12px 0; font-family: ui-monospace, monospace; opacity: .7; }
-
-  /* ---------- 搜索结果 / 侧栏底部按钮 ---------- */
-  .sr-role { font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-right: 6px; border: 1px solid var(--border); color: var(--muted); }
-  #footerBtns { display: none; gap: 8px; margin: 8px 12px 14px; }
-  #footerBtns button { flex: 1; padding: 8px; border-radius: 8px; border: 1px dashed var(--border); background: none; color: var(--accent2); font-size: 12.5px; cursor: pointer; }
-  #footerBtns button:hover { border-color: var(--accent); }
-
-  /* ---------- Wrapped 分享卡片 ---------- */
-  #wmodal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 60; align-items: center; justify-content: center; }
-  #wmodal .wbox { display: flex; flex-direction: column; gap: 12px; max-height: 94vh; }
-  #wmodal .wctrl { display: flex; gap: 8px; align-items: center; }
-  #wcanvas { width: 420px; max-height: calc(94vh - 60px); border-radius: 18px; box-shadow: 0 12px 48px rgba(0,0,0,.6); }
-  .bars { display: flex; align-items: flex-end; gap: 2px; height: 120px; padding-top: 16px; }
-  .bars .b { flex: 1; background: #3987e5; border-radius: 3px 3px 0 0; min-height: 2px; position: relative; }
-  .bars .b:hover { background: #86b6ef; }
-  .bars .b .lbl { position: absolute; top: -16px; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--muted); white-space: nowrap; }
-  .axis { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--muted); margin-top: 6px; }
-  .hbar-row { display: flex; align-items: center; gap: 10px; margin: 7px 0; }
-  .hbar-name { width: 230px; text-align: right; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; font-size: 11.5px; }
-  .hbar-track { flex: 1; }
-  .hbar-fill { height: 14px; border-radius: 0 3px 3px 0; min-width: 2px; }
-  .hbar-val { width: 80px; font-size: 11.5px; color: var(--muted); }
-  /* 列宽按内容自适应：width:max-content 让每列撑到内容宽度，min-width 保证撑满容器，超宽由外层容器横向滚动 */
-  table.usage { border-collapse: collapse; width: max-content; min-width: 100%; font-size: 12.5px; }
-  table.usage th, table.usage td { border: 1px solid var(--border); padding: 5px 10px; text-align: left; vertical-align: top; white-space: nowrap; font-size: 12px; }
-  table.usage th { background: var(--panel2); }
-  table.usage td.num, table.usage th.num { text-align: right; font-family: ui-monospace, monospace; }
-  table.usage tr.total td { font-weight: 700; background: var(--panel2); }
-
-  #filterbar { display: flex; gap: 6px; padding: 0 12px 10px; }
-  .fbtn { padding: 4px 12px; border-radius: 20px; font-size: 12px; color: var(--muted); background: var(--panel2); border: 1px solid var(--border); cursor: pointer; user-select: none; }
-  .fbtn.active { color: var(--text); border-color: var(--accent); background: rgba(217,123,79,.12); }
-  .tag { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 10px; margin-left: 6px; vertical-align: 2px; border: 1px solid var(--border); color: var(--muted); }
-  .tag.installed { border-color: #4a72b5; color: #7fa3d9; }
-  .tag.user { border-color: var(--green); color: var(--green); }
-  .tag.uses { border-color: rgba(217,123,79,.5); color: var(--accent2); }
-  #list { flex: 1; overflow-y: auto; padding: 0 8px 8px; }
-  .item { padding: 9px 10px; border-radius: 8px; cursor: pointer; margin-bottom: 2px; }
-  .item:hover { background: var(--panel2); }
-  .item.active { background: rgba(217,123,79,.15); outline: 1px solid rgba(217,123,79,.4); }
-  .item .nm { font-size: 13.5px; font-weight: 600; font-family: ui-monospace, monospace; }
-  .item .ds { font-size: 12px; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-  #newbtn { margin: 8px 12px 14px; padding: 9px; border-radius: 8px; border: 1px dashed var(--border); background: none; color: var(--accent2); font-size: 13px; cursor: pointer; }
-  #newbtn:hover { border-color: var(--accent); background: rgba(217,123,79,.08); }
-
-  /* ---------- 主区 ---------- */
-  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  #toolbar { display: flex; align-items: center; gap: 8px; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--panel); }
-  #title { font-size: 15px; font-weight: 700; font-family: ui-monospace, monospace; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #fpath { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 8px; }
-  .btn { padding: 7px 14px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font-size: 13px; cursor: pointer; white-space: nowrap; }
-  .btn:hover { border-color: var(--muted); }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .btn.primary:hover { background: var(--accent2); }
-  .btn.danger { color: var(--danger); }
-  .btn.danger:hover { border-color: var(--danger); }
-  .btn:disabled { opacity: .4; cursor: default; }
-  #content { flex: 1; overflow-y: auto; padding: 24px 32px; }
-  #empty { color: var(--muted); text-align: center; margin-top: 20vh; font-size: 14px; }
-  #editor { display: none; width: 100%; height: 100%; resize: none; background: var(--code-bg); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 16px; font-family: ui-monospace, "SF Mono", monospace; font-size: 13px; line-height: 1.6; outline: none; }
-  #editor:focus { border-color: var(--accent); }
-  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--panel2); border: 1px solid var(--border); padding: 10px 20px; border-radius: 10px; font-size: 13px; display: none; z-index: 99; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
-
-  /* ---------- frontmatter 元信息 ---------- */
-  #metabar { display: none; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
-  .chip { font-size: 12px; padding: 4px 10px; border-radius: 20px; background: var(--panel2); border: 1px solid var(--border); color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .chip b { color: var(--accent2); font-weight: 600; margin-right: 4px; }
-
-  /* ---------- markdown 渲染 ---------- */
-  #render { max-width: 860px; line-height: 1.7; font-size: 14.5px; }
-  #render.wide { max-width: none; }  /* 统计仪表盘用全宽 */
-  #render h1 { font-size: 24px; margin: 18px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
-  #render h2 { font-size: 19px; margin: 20px 0 10px; }
-  #render h3 { font-size: 16px; margin: 16px 0 8px; }
-  #render h4 { font-size: 14.5px; margin: 14px 0 6px; }
-  #render p { margin: 8px 0; }
-  #render ul, #render ol { margin: 8px 0 8px 24px; }
-  #render li { margin: 3px 0; }
-  #render code { background: var(--code-bg); border: 1px solid var(--border); padding: 1px 6px; border-radius: 5px; font-family: ui-monospace, monospace; font-size: 13px; color: #f0b27a; }
-  #render pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow-x: auto; margin: 12px 0; }
-  #render pre code { background: none; border: none; padding: 0; color: #cdd6e4; }
-  #render blockquote { border-left: 3px solid var(--accent); padding: 4px 14px; color: var(--muted); margin: 10px 0; background: rgba(217,123,79,.05); border-radius: 0 8px 8px 0; }
-  #render table { border-collapse: collapse; margin: 12px 0; display: block; overflow-x: auto; max-width: 100%; }
-  #render th, #render td { border: 1px solid var(--border); padding: 6px 12px; font-size: 13.5px; text-align: left; }
-  #render th { background: var(--panel2); }
-  #render a { color: var(--accent2); }
-  #render hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
-  #render img { max-width: 100%; }
-
-  /* ---------- 新建弹窗 ---------- */
-  #modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 50; align-items: center; justify-content: center; }
-  #modal .box { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 24px; width: 420px; }
-  #modal h3 { font-size: 16px; margin-bottom: 16px; }
-  #modal input { width: 100%; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font-size: 14px; outline: none; font-family: ui-monospace, monospace; }
-  #modal input:focus { border-color: var(--accent); }
-  #modal .hint { font-size: 12px; color: var(--muted); margin: 8px 0 16px; }
-  #modal .row { display: flex; gap: 10px; justify-content: flex-end; }
-</style>
+<link rel="stylesheet" href="/panel.css">
 </head>
 <body>
 
-<div id="sidebar">
-  <div id="logo">⌘ Claude <span>Panel</span></div>
-  <div id="tabs">
-    <div class="tab" data-type="commands">/ 命令<span class="cnt"></span></div>
-    <div class="tab" data-type="skills">Skills<span class="cnt"></span></div>
-    <div class="tab" data-type="agents">Agents<span class="cnt"></span></div>
-    <div class="tab" data-type="plugins">插件<span class="cnt"></span></div>
-    <div class="tab" data-type="config">配置<span class="cnt"></span></div>
-    <div class="tab" data-type="workflows">工作流<span class="cnt"></span></div>
-    <div class="tab" data-type="proxy">账号路由<span class="cnt"></span></div>
-    <div class="tab" data-type="inspector">抓包<span class="cnt"></span></div>
-    <div class="tab" data-type="sessions">会话<span class="cnt"></span></div>
-    <div class="tab" data-type="voyage">航程<span class="cnt"></span></div>
-    <div class="tab" data-type="stats">统计<span class="cnt"></span></div>
-  </div>
+<aside id="navrail" aria-label="主导航"><div id="logo"><span class="brand-mark"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 6 6 6-6 6M13 18h6"/></svg></span><span class="brand-name">Claude <span>Panel</span></span></div><nav id="tabs"><div class="nav-group-label" data-nav-group="工作空间">工作空间</div><button type="button" class="tab" data-type="stats" title="stats"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V5m0 14h16M8 15v-4m5 4V7m5 8v-6"/></svg><span class="nav-label">stats</span><span class="cnt"></span></button><button type="button" class="tab" data-type="proxy" title="proxy"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01M12 10v4"/></svg><span class="nav-label">proxy</span><span class="cnt"></span></button><button type="button" class="tab" data-type="inspector" title="inspector"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span class="nav-label">inspector</span><span class="cnt"></span></button><button type="button" class="tab" data-type="sessions" title="sessions"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"/></svg><span class="nav-label">sessions</span><span class="cnt"></span></button><button type="button" class="tab" data-type="voyage" title="voyage"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 17 9 4 9-4M5 15l7-3 7 3M12 3v9M12 3l7 6h-7M5 15v3m14-3v3"/></svg><span class="nav-label">voyage</span><span class="cnt"></span></button><div class="nav-group-label" data-nav-group="资源管理">资源管理</div><button type="button" class="tab" data-type="commands" title="commands"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 6 6 6-6 6M13 18h6"/></svg><span class="nav-label">commands</span><span class="cnt"></span></button><button type="button" class="tab" data-type="skills" title="skills"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4L12 3Z"/></svg><span class="nav-label">skills</span><span class="cnt"></span></button><button type="button" class="tab" data-type="agents" title="agents"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="7" width="16" height="14" rx="3"/><path d="M12 3v4M8 12h.01M16 12h.01M9 17h6M1 12v5m22-5v5"/></svg><span class="nav-label">agents</span><span class="cnt"></span></button><button type="button" class="tab" data-type="plugins" title="plugins"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3v4m6-4v4M7 7h10v5a5 5 0 0 1-10 0V7Zm5 10v4"/></svg><span class="nav-label">plugins</span><span class="cnt"></span></button><button type="button" class="tab" data-type="workflows" title="workflows"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="5" rx="1"/><rect x="2" y="17" width="7" height="5" rx="1"/><rect x="15" y="17" width="7" height="5" rx="1"/><path d="M12 7v5M5.5 17v-5h13v5"/></svg><span class="nav-label">workflows</span><span class="cnt"></span></button><button type="button" class="tab" data-type="config" title="config"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></svg><span class="nav-label">config</span><span class="cnt"></span></button></nav><div id="navFooter"><strong><span class="status-dot"></span><span id="localLabel">本地工作区</span></strong><p>PRIVATE BY DESIGN</p></div></aside>
+<aside id="sidebar"><div class="library-header"><span id="libraryTitle">资源</span><span id="libraryCount"></span></div>
   <div id="projbar"><select id="projSel"></select></div>
   <div id="searchbox"><input id="search" placeholder="搜索名称 / 描述…"></div>
   <div id="filterbar">
@@ -282,11 +24,13 @@
     <button id="importBtn"></button>
   </div>
   <input type="file" id="importFile" accept=".json" style="display:none">
-</div>
+</aside>
+<button id="libraryBackdrop" type="button" aria-label="关闭资源列表"></button>
 
-<div id="main">
+<main id="main">
   <div id="toolbar">
-    <div id="title">未选择<span id="fpath"></span></div>
+    <button class="btn" id="libraryToggle" type="button" aria-label="打开资源列表" aria-expanded="false">☰</button>
+    <div id="toolbarIdentity"><div id="sectionCrumb">工作空间</div><div id="title">未选择<span id="fpath"></span></div></div>
     <button class="btn" id="editBtn" disabled>编辑</button>
     <button class="btn primary" id="saveBtn" style="display:none">保存</button>
     <button class="btn" id="cancelBtn" style="display:none">取消</button>
@@ -297,11 +41,11 @@
     <div id="empty">← 从左侧选择一个资源，或点击「新建」</div>
     <div id="metabar"></div>
     <div id="render"></div>
-    <textarea id="editor" spellcheck="false"></textarea>
+    <textarea id="editor" spellcheck="false" aria-label="文件内容编辑器"></textarea>
   </div>
-</div>
+</main>
 
-<div id="modal">
+<div id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
   <div class="box">
     <h3 id="modalTitle">新建</h3>
     <input id="newName" placeholder="名称（如 my-command）">
@@ -313,7 +57,7 @@
   </div>
 </div>
 
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite"></div>
 <div id="tip"></div>
 <button id="toBottom" title="到底部">⬇</button>
 
@@ -331,6 +75,54 @@
 
 <script>
 const $ = s => document.querySelector(s);
+
+const ICONS = {"terminal": "<path d=\"m5 6 6 6-6 6M13 18h6\"/>", "stats": "<path d=\"M4 19V5m0 14h16M8 15v-4m5 4V7m5 8v-6\"/>", "proxy": "<rect x=\"3\" y=\"4\" width=\"18\" height=\"6\" rx=\"2\"/><rect x=\"3\" y=\"14\" width=\"18\" height=\"6\" rx=\"2\"/><path d=\"M7 7h.01M7 17h.01M12 10v4\"/>", "inspector": "<path d=\"M3 12h4l3-7 4 14 3-7h4\"/>", "sessions": "<path d=\"M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z\"/>", "voyage": "<path d=\"m3 17 9 4 9-4M5 15l7-3 7 3M12 3v9M12 3l7 6h-7M5 15v3m14-3v3\"/>", "commands": "<path d=\"m5 6 6 6-6 6M13 18h6\"/>", "skills": "<path d=\"m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4L12 3Z\"/>", "agents": "<rect x=\"4\" y=\"7\" width=\"16\" height=\"14\" rx=\"3\"/><path d=\"M12 3v4M8 12h.01M16 12h.01M9 17h6M1 12v5m22-5v5\"/>", "plugins": "<path d=\"M9 3v4m6-4v4M7 7h10v5a5 5 0 0 1-10 0V7Zm5 10v4\"/>", "workflows": "<rect x=\"8\" y=\"2\" width=\"8\" height=\"5\" rx=\"1\"/><rect x=\"2\" y=\"17\" width=\"7\" height=\"5\" rx=\"1\"/><rect x=\"15\" y=\"17\" width=\"7\" height=\"5\" rx=\"1\"/><path d=\"M12 7v5M5.5 17v-5h13v5\"/>", "config": "<path d=\"M4 7h16M4 17h16M8 4v6m8 4v6\"/>", "folder": "<path d=\"M3 8a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9H3V8Z\"/>", "arrow": "<path d=\"M5 12h14m-6-6 6 6-6 6\"/>"};
+function icon(type) { return `<svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[type] || ICONS.folder}</svg>`; }
+function ui(zh, en, ja = en) { return lang === 'zh' ? zh : lang === 'ja' ? ja : en; }
+function viewDescription(type) {
+  const descriptions = {
+    stats: ['把每一次对话，变成看得见的用量与趋势。', 'A clear view of your conversations, usage, and spending.'],
+    proxy: ['你的账号，一个入口。随时切换，无缝继续。', 'All your accounts. One local gateway. Keep your work flowing.'],
+    inspector: ['还原每次模型调用，看清请求、上下文与响应。', 'Inspect every model request, context, and response.'],
+    sessions: ['找回工作上下文，继续之前的对话。', 'Find your context and pick up where you left off.'],
+    voyage: ['沿着时间，回看你与 Claude 一起完成的工作。', 'Follow the timeline of your work with Claude.'],
+    commands: ['把重复工作，整理成触手可及的命令。', 'Keep your everyday commands organized and close at hand.'],
+    skills: ['浏览、维护和发现你的 Claude 技能。', 'Explore and maintain the skills in your workspace.'],
+    agents: ['为不同的任务，准备合适的专属助手。', 'Purpose-built assistants for the way you work.'],
+    plugins: ['集中查看已安装的插件与扩展能力。', 'Your installed plugins and everything they provide.'],
+    workflows: ['让多个步骤，成为可以复用的工作流。', 'Bring repeatable steps together into reusable workflows.'],
+    config: ['管理 Claude 的指令、偏好与项目配置。', 'Manage instructions, preferences, and project settings.'],
+  };
+  const copy = descriptions[type] || descriptions.commands;
+  return ui(...copy);
+}
+function viewHeading(type, action = '') {
+  return `<div class="view-heading"><div class="view-heading-left"><span class="view-icon">${icon(type)}</span><div><h2>${esc(t('tabs')[type])}</h2><p>${esc(viewDescription(type))}</p></div></div>${action}</div>`;
+}
+function updateWorkspaceChrome() {
+  const dashboard = !!CAPS[state.type].dashboard;
+  document.body.dataset.view = dashboard ? 'dashboard' : 'library';
+  document.body.dataset.section = state.type;
+  $('#sectionCrumb').textContent = ui('工作空间', 'Workspace', 'ワークスペース') + ' / ' + t('tabs')[state.type];
+  $('#libraryTitle').textContent = t('tabs')[state.type];
+  $('#projbar').hidden = !SCOPED.includes(state.type);
+  $('#libraryToggle').hidden = dashboard;
+  document.body.dataset.libraryOpen = 'false';
+  $('#libraryToggle').setAttribute('aria-expanded', 'false');
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.classList.toggle('active', tab.dataset.type === state.type);
+    tab.setAttribute('aria-current', tab.dataset.type === state.type ? 'page' : 'false');
+    tab.title = t('tabs')[tab.dataset.type];
+    tab.setAttribute('aria-label', t('tabs')[tab.dataset.type]);
+  });
+}
+function emptyState() {
+  const type = state.type;
+  const hint = ui('从左侧选择一项，查看内容与可用操作。', 'Select an item from the library to view its content and actions.');
+  $('#empty').innerHTML = `<div class="empty-state"><span class="empty-icon">${icon(type)}</span><h2>${esc(t('tabs')[type])}</h2><p>${esc(viewDescription(type))}</p><p>${esc(hint)}</p>${CAPS[type].new ? `<button class="btn" id="emptyCreate">＋ ${esc(t('newBtn').replace(/^＋\s*/, ''))}</button>` : ''}</div>`;
+  const create = $('#emptyCreate'); if (create) create.onclick = () => $('#newbtn').click();
+}
+
 
 // ---------- i18n 框架 ----------
 // 新增语言三步：1) LANGS 注册 code+label（出现在右上角下拉框）
@@ -374,17 +166,17 @@ const I18N = {
     wDaysUnit: '天', wDownload: '下载 PNG', wR7: '过去 7 天', wR30: '过去 30 天',
     bNight: '🦉 深夜码农', bBurner: '🔥 Token 燃烧机', bStreak: '⚡ 连肝选手', bShip: '🚀 稳定输出',
     searchSessionsPh: '搜标题；回车全文搜索会话内容…', srNone: '没有找到匹配的会话内容',
-        voyageHero: '🚢 你的方舟已航行 {days} 天,停靠 {projects} 个项目港,{active} 天在掌舵,留下 {sessions} 段航迹。', voyageRiver: '时间之河（每列一天,色块=会话,高度=对话轮数,点击进入）', voyageLegs: '航段 · 你的每一程连续作业', voyageLegMeta: '{s} 会话 / {d} 天', voyageSessUnit: '会话', voyageEmpty: '还没有航迹', 
+        voyageHero: '🚢 你的方舟已航行 {days} 天,停靠 {projects} 个项目港,{active} 天在掌舵,留下 {sessions} 段航迹。', voyageRiver: '时间之河（每列一天,色块=会话,高度=对话轮数,点击进入）', voyageLegs: '航段 · 你的每一程连续作业', voyageLegMeta: '{s} 会话 / {d} 天', voyageSessUnit: '会话', voyageEmpty: '还没有航迹',
     replayBtn: '▶ 完整回放 · 系统提示词 · 思考 · 工具轨迹', replayBack: '← 返回会话详情', replayTruncated: '（会话过长，仅显示前 400 轮）',
     replayThinking: '💭 思考过程', replayInput: '输入', replayResult: '返回结果', replayTurnMeta: '本轮耗时 {s} 秒 · {n} 条消息',
-        replaySub: '一次生成的完整 trace：用户消息、思考过程、每次工具调用的输入与返回。若该会话经过 Inspector 代理，还会带上真实系统提示词和客户端版本。', replayCaptured: '本会话已被 Inspector 抓取 · Claude Code {v} · 下方为真实系统提示词与思考', 
-        replayNoCapTitle: '⚠ 本次会话没有经过 Inspector 代理，所以看不到系统提示词和真实思考——它们不在 Claude Code 的会话记录文件里，只能在请求发生的当时抓取。历史会话的提示词已无法找回。', replayNoCapHint: '运行上面这条命令接入代理，之后每次 claude 的会话都会在这里自动带上完整系统提示词、工具定义、思考过程和 Claude Code 版本。', 
-        queryRounds: '🔁 这条提问触发了 {n} 轮 LLM 调用（点开看每轮输入/输出）', roundInput: '本轮输入（发给 LLM）', roundOutput: '本轮输出（LLM 返回）', roundsLoading: '加载中…', 
-        ctxTitle: '📥 完整上下文（发给大模型的 {n} 条消息）', 
-        replayHistTitle: '⚠ 本次会话没有被抓取——它发生在代理启用之前（历史会话），系统提示词和思考不在会话记录里、已无法找回。', replayHistHint: '代理已接入 ✓。保持面板开着、在新开的终端里正常用 claude，之后的会话会自动带上完整系统提示词、工具定义和思考。', 
+        replaySub: '一次生成的完整 trace：用户消息、思考过程、每次工具调用的输入与返回。若该会话经过 Inspector 代理，还会带上真实系统提示词和客户端版本。', replayCaptured: '本会话已被 Inspector 抓取 · Claude Code {v} · 下方为真实系统提示词与思考',
+        replayNoCapTitle: '⚠ 本次会话没有经过 Inspector 代理，所以看不到系统提示词和真实思考——它们不在 Claude Code 的会话记录文件里，只能在请求发生的当时抓取。历史会话的提示词已无法找回。', replayNoCapHint: '运行上面这条命令接入代理，之后每次 claude 的会话都会在这里自动带上完整系统提示词、工具定义、思考过程和 Claude Code 版本。',
+        queryRounds: '🔁 这条提问触发了 {n} 轮 LLM 调用（点开看每轮输入/输出）', roundInput: '本轮输入（发给 LLM）', roundOutput: '本轮输出（LLM 返回）', roundsLoading: '加载中…',
+        ctxTitle: '📥 完整上下文（发给大模型的 {n} 条消息）',
+        replayHistTitle: '⚠ 本次会话没有被抓取——它发生在代理启用之前（历史会话），系统提示词和思考不在会话记录里、已无法找回。', replayHistHint: '代理已接入 ✓。保持面板开着、在新开的终端里正常用 claude，之后的会话会自动带上完整系统提示词、工具定义和思考。',
     insEmpty: '还没有抓到流量。用下面的命令启动 Claude Code，所有 API 请求就会出现在这里：', insCopy: '复制命令',
     insSystem: '📜 系统提示词', insThinking: '💭 思考过程（完整）', insTools: '🧰 工具定义', insLastUser: '最后一条用户消息',
-    insResponse: '💬 响应文本', insUsage: '用量', insHint: '仅内存保留最近 50 个请求，敏感头（API Key）不会被记录',
+    insResponse: '💬 响应文本', insUsage: '用量', insHint: '显示最近 200 个请求，记录保存在本机。API Key 等敏感请求头不会写入抓包。',
     liveToday: '今日花费', liveBurn: '燃速', liveActive: '活跃会话', liveBudget: '日预算 $', budgetSaved: '预算已保存 ✓',
     exportBtn: '⬆ 导出配置包', importBtn: '⬇ 导入配置包', importDone: '导入完成：新增 {c}，跳过 {s}',
     stSource: '数据来源：~/.claude/projects 会话记录实时统计（与 ccusage 同源，已按 message.id + requestId 去重）',
@@ -428,17 +220,17 @@ const I18N = {
     wDaysUnit: 'days', wDownload: 'Download PNG', wR7: 'Last 7 days', wR30: 'Last 30 days',
     bNight: '🦉 Night Owl', bBurner: '🔥 Token Burner', bStreak: '⚡ On a Streak', bShip: '🚀 Steady Shipper',
     searchSessionsPh: 'Filter titles; press Enter for full-text search…', srNone: 'No matching session content',
-        voyageHero: '🚢 Your ark has sailed {days} days across {projects} project ports, {active} days at the helm, leaving {sessions} tracks.', voyageRiver: 'River of time (one column per day, blocks = sessions, height = turns, click to open)', voyageLegs: 'Legs · each continuous stretch of work', voyageLegMeta: '{s} sessions / {d} days', voyageSessUnit: 'sessions', voyageEmpty: 'No voyage yet', 
+        voyageHero: '🚢 Your ark has sailed {days} days across {projects} project ports, {active} days at the helm, leaving {sessions} tracks.', voyageRiver: 'River of time (one column per day, blocks = sessions, height = turns, click to open)', voyageLegs: 'Legs · each continuous stretch of work', voyageLegMeta: '{s} sessions / {d} days', voyageSessUnit: 'sessions', voyageEmpty: 'No voyage yet',
     replayBtn: '▶ Full replay · system prompt · thinking · tools', replayBack: '← Back to session', replayTruncated: '(long session, first 400 turns shown)',
     replayThinking: '💭 Thinking', replayInput: 'Input', replayResult: 'Result', replayTurnMeta: 'Turn took {s}s · {n} messages',
-        replaySub: 'The full generation trace: user messages, thinking, and every tool call with its input and result. If this session went through the Inspector proxy, the real system prompt and client version are included too.', replayCaptured: 'Captured by Inspector · Claude Code {v} · real system prompt & thinking below', 
-        replayNoCapTitle: '⚠ This session did not go through the Inspector proxy, so the system prompt and real thinking are not available — they are not stored in Claude Code transcripts and can only be captured live. Past sessions cannot be recovered.', replayNoCapHint: 'Run the command above to enable the proxy; every future claude session will then show its full system prompt, tool definitions, thinking, and Claude Code version right here.', 
-        queryRounds: '🔁 This query triggered {n} LLM round(s) (expand for each round\'s input/output)', roundInput: 'Round input (sent to LLM)', roundOutput: 'Round output (LLM response)', roundsLoading: 'Loading…', 
-        ctxTitle: '📥 Full context ({n} messages sent to the model)', 
-        replayHistTitle: '⚠ This session was not captured — it predates the proxy (a historical session). Its system prompt and thinking are not in the transcript and cannot be recovered.', replayHistHint: 'The proxy is already set up ✓. Keep the panel running and use claude in a freshly opened terminal; future sessions will include the full system prompt, tool definitions and thinking automatically.', 
+        replaySub: 'The full generation trace: user messages, thinking, and every tool call with its input and result. If this session went through the Inspector proxy, the real system prompt and client version are included too.', replayCaptured: 'Captured by Inspector · Claude Code {v} · real system prompt & thinking below',
+        replayNoCapTitle: '⚠ This session did not go through the Inspector proxy, so the system prompt and real thinking are not available — they are not stored in Claude Code transcripts and can only be captured live. Past sessions cannot be recovered.', replayNoCapHint: 'Run the command above to enable the proxy; every future claude session will then show its full system prompt, tool definitions, thinking, and Claude Code version right here.',
+        queryRounds: '🔁 This query triggered {n} LLM round(s) (expand for each round\'s input/output)', roundInput: 'Round input (sent to LLM)', roundOutput: 'Round output (LLM response)', roundsLoading: 'Loading…',
+        ctxTitle: '📥 Full context ({n} messages sent to the model)',
+        replayHistTitle: '⚠ This session was not captured — it predates the proxy (a historical session). Its system prompt and thinking are not in the transcript and cannot be recovered.', replayHistHint: 'The proxy is already set up ✓. Keep the panel running and use claude in a freshly opened terminal; future sessions will include the full system prompt, tool definitions and thinking automatically.',
     insEmpty: 'No traffic captured yet. Launch Claude Code with the command below and every API request will show up here:', insCopy: 'Copy command',
     insSystem: '📜 System prompt', insThinking: '💭 Thinking (full)', insTools: '🧰 Tool definitions', insLastUser: 'Last user message',
-    insResponse: '💬 Response text', insUsage: 'Usage', insHint: 'Last 50 requests kept in memory only; sensitive headers (API keys) are never recorded',
+    insResponse: '💬 Response text', insUsage: 'Usage', insHint: 'Shows the latest 200 requests, persisted locally. Sensitive headers such as API keys are excluded from captures.',
     liveToday: 'Today', liveBurn: 'Burn rate', liveActive: 'Active sessions', liveBudget: 'Daily budget $', budgetSaved: 'Budget saved ✓',
     exportBtn: '⬆ Export bundle', importBtn: '⬇ Import bundle', importDone: 'Imported: {c} created, {s} skipped',
     stSource: 'Source: computed live from ~/.claude/projects transcripts (same source as ccusage, deduplicated by message.id + requestId)',
@@ -482,17 +274,17 @@ const I18N = {
     wDaysUnit: '日', wDownload: 'PNG をダウンロード', wR7: '過去7日間', wR30: '過去30日間',
     bNight: '🦉 夜型エンジニア', bBurner: '🔥 トークンバーナー', bStreak: '⚡ 連続作業の達人', bShip: '🚀 安定稼働',
     searchSessionsPh: 'タイトル検索；Enter で全文検索…', srNone: '一致するセッション内容がありません',
-        voyageHero: '🚢 あなたの方舟は {days} 日間航海し、{projects} のプロジェクト港に寄港、{active} 日操舵し、{sessions} の航跡を残しました。', voyageRiver: '時の川（1列=1日、ブロック=セッション、高さ=ターン数、クリックで開く）', voyageLegs: '航路区間 · 連続作業ごと', voyageLegMeta: '{s} セッション / {d} 日', voyageSessUnit: 'セッション', voyageEmpty: 'まだ航海がありません', 
+        voyageHero: '🚢 あなたの方舟は {days} 日間航海し、{projects} のプロジェクト港に寄港、{active} 日操舵し、{sessions} の航跡を残しました。', voyageRiver: '時の川（1列=1日、ブロック=セッション、高さ=ターン数、クリックで開く）', voyageLegs: '航路区間 · 連続作業ごと', voyageLegMeta: '{s} セッション / {d} 日', voyageSessUnit: 'セッション', voyageEmpty: 'まだ航海がありません',
     replayBtn: '▶ フル再生 · システムプロンプト · 思考 · ツール', replayBack: '← セッション詳細に戻る', replayTruncated: '（長いセッションのため先頭400ターンのみ表示）',
     replayThinking: '💭 思考プロセス', replayInput: '入力', replayResult: '結果', replayTurnMeta: 'このターン {s} 秒 · {n} メッセージ',
-        replaySub: '生成の完全トレース：ユーザーメッセージ、思考、各ツール呼び出しの入力と結果。Inspector プロキシ経由のセッションなら実際のシステムプロンプトとクライアントバージョンも含みます。', replayCaptured: 'Inspector が捕捉 · Claude Code {v} · 実際のシステムプロンプトと思考は下記', 
-        replayNoCapTitle: '⚠ このセッションは Inspector プロキシを経由していないため、システムプロンプトと実際の思考は表示できません——これらは Claude Code のトランスクリプトに保存されず、リクエスト時にのみ捕捉できます。過去のセッションは復元できません。', replayNoCapHint: '上記のコマンドでプロキシを有効にすると、以降の claude セッションは完全なシステムプロンプト、ツール定義、思考、Claude Code バージョンをここに表示します。', 
-        queryRounds: '🔁 この質問が {n} 回の LLM 呼び出しを発生させました（展開して各ラウンドの入出力を表示）', roundInput: 'このラウンドの入力（LLMへ）', roundOutput: 'このラウンドの出力（LLMから）', roundsLoading: '読み込み中…', 
-        ctxTitle: '📥 完全なコンテキスト（モデルに送信された {n} 件のメッセージ）', 
-        replayHistTitle: '⚠ このセッションは捕捉されていません——プロキシ有効化より前の履歴セッションで、システムプロンプトと思考はトランスクリプトになく復元できません。', replayHistHint: 'プロキシは設定済み ✓。パネルを起動したまま、新しく開いたターミナルで claude を使えば、以降のセッションはシステムプロンプト・ツール定義・思考を自動的に含みます。', 
+        replaySub: '生成の完全トレース：ユーザーメッセージ、思考、各ツール呼び出しの入力と結果。Inspector プロキシ経由のセッションなら実際のシステムプロンプトとクライアントバージョンも含みます。', replayCaptured: 'Inspector が捕捉 · Claude Code {v} · 実際のシステムプロンプトと思考は下記',
+        replayNoCapTitle: '⚠ このセッションは Inspector プロキシを経由していないため、システムプロンプトと実際の思考は表示できません——これらは Claude Code のトランスクリプトに保存されず、リクエスト時にのみ捕捉できます。過去のセッションは復元できません。', replayNoCapHint: '上記のコマンドでプロキシを有効にすると、以降の claude セッションは完全なシステムプロンプト、ツール定義、思考、Claude Code バージョンをここに表示します。',
+        queryRounds: '🔁 この質問が {n} 回の LLM 呼び出しを発生させました（展開して各ラウンドの入出力を表示）', roundInput: 'このラウンドの入力（LLMへ）', roundOutput: 'このラウンドの出力（LLMから）', roundsLoading: '読み込み中…',
+        ctxTitle: '📥 完全なコンテキスト（モデルに送信された {n} 件のメッセージ）',
+        replayHistTitle: '⚠ このセッションは捕捉されていません——プロキシ有効化より前の履歴セッションで、システムプロンプトと思考はトランスクリプトになく復元できません。', replayHistHint: 'プロキシは設定済み ✓。パネルを起動したまま、新しく開いたターミナルで claude を使えば、以降のセッションはシステムプロンプト・ツール定義・思考を自動的に含みます。',
     insEmpty: 'まだトラフィックがありません。以下のコマンドで Claude Code を起動すると、全 API リクエストがここに表示されます：', insCopy: 'コマンドをコピー',
     insSystem: '📜 システムプロンプト', insThinking: '💭 思考プロセス（完全）', insTools: '🧰 ツール定義', insLastUser: '最後のユーザーメッセージ',
-    insResponse: '💬 応答テキスト', insUsage: '使用量', insHint: '直近50リクエストのみメモリ保持。APIキー等の機密ヘッダーは記録されません',
+    insResponse: '💬 応答テキスト', insUsage: '使用量', insHint: '直近200件を表示し、記録はローカルに保存。APIキー等の機密ヘッダーは記録されません。',
     liveToday: '本日の費用', liveBurn: 'バーンレート', liveActive: 'アクティブ', liveBudget: '日予算 $', budgetSaved: '予算を保存しました ✓',
     exportBtn: '⬆ バンドルをエクスポート', importBtn: '⬇ バンドルをインポート', importDone: 'インポート完了：新規 {c}、スキップ {s}',
     stSource: 'データソース：~/.claude/projects のトランスクリプトからリアルタイム集計（ccusage と同一ソース、message.id + requestId で重複排除済み）',
@@ -542,7 +334,7 @@ async function api(method, path, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  if (!res.ok) { const error = new Error(data.error || res.statusText); error.status = res.status; throw error; }
   return data;
 }
 
@@ -568,8 +360,13 @@ async function loadCounts() {
 }
 
 async function switchType(type) {
+  if (state.editing && !confirm(t('unsaved'))) return;
   disconnectLive();
+  stopInspectorPoll();
+  state.items = [];
+  $('#list').replaceChildren();
   state.type = type; state.current = null; state.editing = false; state.keyword = '';
+  updateWorkspaceChrome();
   $('#search').value = '';
   $('#search').placeholder = type === 'sessions' ? t('searchSessionsPh') : t('search');
   $('#footerBtns').style.display = type === 'config' ? 'flex' : 'none';
@@ -577,27 +374,35 @@ async function switchType(type) {
   $('#newbtn').style.display = CAPS[type].new ? 'block' : 'none';
   $('#filterbar').style.display = CAPS[type].filter ? 'flex' : 'none';
   $('#delBtn').textContent = type === 'plugins' ? t('uninstall') : t('del');
+  localStorage.setItem('panel-section', type);
   showEmpty();
   if (type === 'proxy') { await renderProxyTab(); return; }
   if (type === 'voyage') { await renderVoyage(); return; }
   if (CAPS[type].dashboard) { await renderStatsTab(); return; }
   if (type === 'inspector') startInspectorPoll(); else stopInspectorPoll();
-  const { items } = await api('GET', type);
-  state.items = items;
-  document.querySelector(`.tab[data-type="${type}"] .cnt`).textContent = items.filter(it => matchOrigin(it, type)).length;
-  renderList();
+  try {
+    const { items } = await api('GET', type);
+    if (state.type !== type) return;
+    state.items = items;
+    document.querySelector(`.tab[data-type="${type}"] .cnt`).textContent = items.filter(it => matchOrigin(it, type)).length;
+    renderList();
+  } catch (e) { toast(t('loadFail') + e.message, false); }
 }
 
 function renderList() {
   const kw = state.keyword.toLowerCase();
   const list = $('#list');
+  if (CAPS[state.type].dashboard) { list.replaceChildren(); return; }
   list.innerHTML = '';
-  state.items
+  const visibleItems = state.items
     .filter(it => matchOrigin(it))
-    .filter(it => !kw || it.name.toLowerCase().includes(kw) || (it.description || '').toLowerCase().includes(kw))
-    .forEach(it => {
+    .filter(it => !kw || it.name.toLowerCase().includes(kw) || (it.description || '').toLowerCase().includes(kw));
+  $('#libraryCount').textContent = visibleItems.length + ui(' 项', ' items', ' 件');
+  if (!visibleItems.length) { const note = document.createElement('p'); note.className = 'list-empty'; note.textContent = kw ? ui('没有找到匹配的内容', 'No matching results') : ui('这里还没有内容', 'Nothing here yet'); list.append(note); }
+  visibleItems.forEach(it => {
       const key = it.key || it.name;
-      const div = document.createElement('div');
+      const div = document.createElement('button');
+      div.type = 'button';
       div.className = 'item' + (state.current === key ? ' active' : '');
       const prefix = state.type === 'commands' ? '/' : '';
       div.innerHTML = `<div class="nm"></div><div class="ds"></div>`;
@@ -626,11 +431,13 @@ function renderList() {
 
 function showEmpty() {
   $('#empty').style.display = 'block';
+  emptyState();
   $('#render').innerHTML = '';
   $('#render').classList.remove('wide');
+  $('#metabar').replaceChildren();
   $('#metabar').style.display = 'none';
   $('#editor').style.display = 'none';
-  $('#title').firstChild.textContent = t('noSelection');
+  $('#title').firstChild.textContent = t('tabs')[state.type];
   $('#fpath').textContent = '';
   $('#editBtn').disabled = $('#delBtn').disabled = true;
   setEditMode(false);
@@ -641,8 +448,12 @@ async function openItem(key, displayName) {
   state.editing = false;
   if (state.type === 'inspector') return openInspect(key);
   try {
-    const d = await api('GET', `${state.type}/${encodeURIComponent(key)}`);
+    const type = state.type;
+    const d = await api('GET', `${type}/${encodeURIComponent(key)}`);
+    if (state.type !== type) return;
     state.current = key;
+    document.body.dataset.libraryOpen = 'false';
+    $('#libraryToggle').setAttribute('aria-expanded', 'false');
     state.raw = d.content;
     $('#empty').style.display = 'none';
     $('#title').firstChild.textContent = (state.type === 'commands' ? '/' : '') + (displayName || d.name);
@@ -754,6 +565,7 @@ $('#newbtn').onclick = () => {
   $('#newName').focus();
 };
 function closeModal() { $('#modal').style.display = 'none'; }
+$('#modal').addEventListener('click', e => { if (e.target === $('#modal')) closeModal(); });
 async function createItem() {
   const name = $('#newName').value.trim();
   if (!name) return toast(t('nameRequired'), false);
@@ -997,6 +809,7 @@ $('#importFile').onchange = async e => {
 async function renderVoyage() {
   try {
     const d = await api('GET', 'voyage');
+    if (state.type !== 'voyage') return;
     $('#empty').style.display = 'none';
     $('#title').firstChild.textContent = t('tabs')['voyage'];
     $('#fpath').textContent = '~/.claude/history.jsonl';
@@ -1005,12 +818,13 @@ async function renderVoyage() {
     $('#metabar').style.display = 'none';
     $('#render').style.display = 'block';
     $('#render').classList.add('wide');
-    $('#render').innerHTML = voyageHTML(d);
+    if (state.type !== 'voyage') return;
+    $('#render').innerHTML = viewHeading('voyage') + voyageHTML(d);
     // 河流默认滚到最右（最近）
     const river = $('#river'); if (river) river.scrollLeft = river.scrollWidth;
     // 绑定点击：河流节点 + 故事线里的会话 → 打开会话
     $('#render').querySelectorAll('[data-sid]').forEach(el => {
-      el.onclick = () => { state.type = 'sessions'; openItem(el.dataset.sid); };
+      el.onclick = async () => { await switchType('sessions'); await openItem(el.dataset.sid); };
     });
   } catch (e) { toast(t('loadFail') + e.message, false); }
 }
@@ -1070,6 +884,7 @@ async function refreshInspector() {
   if (state.type !== 'inspector') return stopInspectorPoll();
   try {
     const d = await api('GET', 'inspector');
+    if (state.type !== 'inspector') return;
     _insProxyPort = d.proxyPort;
     const changed = JSON.stringify(d.items.map(i => i.key)) !== JSON.stringify(state.items.map(i => i.key));
     state.items = d.items;
@@ -1083,7 +898,7 @@ function renderInspectorEmpty() {
   $('#empty').style.display = 'none';
   $('#render').style.display = 'block';
   $('#render').classList.remove('wide');
-  $('#render').innerHTML = `<div class="chart"><h3>🕵️ Inspector</h3>
+  $('#render').innerHTML = viewHeading('inspector') + `<div class="chart"><h3>${esc(ui('开始捕获请求', 'Start capturing requests'))}</h3>
     <p style="color:var(--muted);font-size:13.5px;margin-bottom:12px">${esc(t('insEmpty'))}</p>
     <pre style="background:var(--code-bg);border:1px solid var(--border);border-radius:10px;padding:14px;font-family:ui-monospace,monospace;font-size:13px">${esc(cmd)}</pre>
     <div style="margin-top:12px"><button class="btn primary" id="insCopyBtn">${esc(t('insCopy'))}</button></div>
@@ -1093,6 +908,12 @@ function renderInspectorEmpty() {
 }
 // 共享：把一条抓包记录的完整详情渲染进容器——用量 / 完整上下文 / 系统提示词 / 工具 / 思考 / 输出
 function renderCaptureDetail(wrap, r) {
+  wrap.classList.add('capture-detail');
+  const summary = document.createElement('div'); summary.className = 'capture-summary';
+  for (const [label, ok] of [[String(r.status || '—'), r.status >= 200 && r.status < 300], [r.upstreamName, false], [r.model, false], [Math.round((r.durationMs || 0) / 100) / 10 + 's', false]]) {
+    if (!label) continue; const badge = document.createElement('span'); badge.textContent = label; if (ok) badge.className = 'capture-ok'; summary.append(badge);
+  }
+  wrap.append(summary);
   const sec = (title, body, mono, open) => {
     const det = document.createElement('details'); det.open = !!open;
     const sum = document.createElement('summary');
@@ -1153,7 +974,10 @@ function renderCaptureDetail(wrap, r) {
 async function openInspect(key) {
   try {
     const r = await api('GET', 'inspector/' + encodeURIComponent(key));
+    if (state.type !== 'inspector') return;
     state.current = key;
+    document.body.dataset.libraryOpen = 'false';
+    $('#libraryToggle').setAttribute('aria-expanded', 'false');
     $('#empty').style.display = 'none';
     $('#title').firstChild.textContent = (r.model || '?') + ' · ' + r.status;
     $('#fpath').textContent = r.path + ' · ' + Math.round(r.durationMs / 1000) + 's';
@@ -1194,6 +1018,13 @@ function connectLive() {
 }
 function disconnectLive() { if (liveES) { liveES.close(); liveES = null; } }
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchType(t.dataset.type));
+function toggleLibrary(force) {
+  const open = force ?? document.body.dataset.libraryOpen !== 'true';
+  document.body.dataset.libraryOpen = String(open);
+  $('#libraryToggle').setAttribute('aria-expanded', String(open));
+}
+$('#libraryToggle').onclick = () => toggleLibrary();
+$('#libraryBackdrop').onclick = () => toggleLibrary(false);
 document.querySelectorAll('.fbtn').forEach(b => b.onclick = () => {
   state.origin = b.dataset.origin;
   document.querySelectorAll('.fbtn').forEach(x => x.classList.toggle('active', x === b));
@@ -1202,7 +1033,7 @@ document.querySelectorAll('.fbtn').forEach(b => b.onclick = () => {
 });
 document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && e.key === 's' && state.editing) { e.preventDefault(); $('#saveBtn').click(); }
-  if (e.key === 'Escape') closeModal();
+  if (e.key === 'Escape') { closeModal(); toggleLibrary(false); }
 });
 
 // ---------- 悬浮提示（任何带 data-tip 的元素）----------
@@ -1234,7 +1065,7 @@ $('#list').addEventListener('scroll', () => updateToBottom($('#list')));
 _toBottom.onclick = () => _lastScrolled.scrollTo({ top: _lastScrolled.scrollHeight, behavior: 'smooth' });
 
 // ---------- 轻量 Markdown 渲染 ----------
-function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function inline(s) {
   return esc(s)
     .replace(/`([^`]+)`/g, '<code>$1</code>')
@@ -1334,20 +1165,27 @@ $('#projSel').onchange = async e => {
 
 // ---------- 统计仪表盘 ----------
 const fmtNum = n => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n ?? 0);
-const CHART_COLORS = ['#3987e5', '#199e70', '#c98500', '#9085e9', '#e66767', '#d55181', '#d95926', '#86b6ef'];
+const CHART_COLORS = ['#7c9fbe', '#87b29e', '#b9a17e', '#a499be', '#c48e8b', '#b58ca4', '#c39574', '#96b6cb'];
 
 let statsRange = 42; // 每日图展示的天数，0 = 全部
 
 async function renderStatsTab() {
   try {
     state.statsData = await api('GET', 'stats');
+    if (state.type !== 'stats') return;
     $('#empty').style.display = 'none';
     $('#title').firstChild.textContent = t('tabs')['stats'];
     $('#fpath').textContent = '~/.claude/projects';
     $('#render').style.display = 'block';
     $('#render').classList.add('wide');
     renderStatsNow();
-  } catch (e) { toast(t('loadFail') + e.message, false); }
+  } catch (e) {
+    if (state.type !== 'stats') return;
+    if (e.status !== 404) { toast(t('loadFail') + e.message, false); return; }
+    $('#empty').style.display = 'none'; $('#render').classList.add('wide');
+    $('#render').innerHTML = viewHeading('stats') + `<div class="route-empty"><span class="empty-icon">${icon('stats')}</span><h3>${esc(ui('从你的第一段对话开始', 'Start with your first conversation'))}</h3><p class="route-muted">${esc(ui('接入 Claude 后，这里会显示会话用量、模型分布与费用趋势。', 'Once Claude is connected, your usage, models, and spending trends appear here.'))}</p><button class="btn primary" id="statsSetup">${esc(ui('配置 Claude 账号', 'Set up a Claude account'))}</button></div>`;
+    $('#statsSetup').onclick = () => switchType('proxy');
+  }
 }
 
 function renderStatsNow() {
@@ -1501,7 +1339,7 @@ function drawWrapped(d) {
 }
 
 function statsHTML(d) {
-  let h = '';
+  let h = viewHeading('stats', `<button class="btn" id="wrappedBtn">${icon('arrow')} ${esc(t('wrappedBtn').replace(/^🎁\s*/, ''))}</button>`);
   // Live 实时条
   h += `<div id="liveBar"><span class="dot"></span>
     <span><span class="lv">${esc(t('liveToday'))}</span> <b class="cost" id="lvCost">—</b></span>
@@ -1517,8 +1355,8 @@ function statsHTML(d) {
     [(d.firstSessionDate || '').slice(0, 10) || '—', t('stSince')],
   ];
   h += '<div class="cards">' + cards.map(([v, k]) => `<div class="card"><div class="v">${esc(v)}</div><div class="k">${esc(k)}</div></div>`).join('') + '</div>';
-  if (d.source === 'transcripts') h += `<div style="font-size:11.5px;color:var(--muted);margin:-8px 0 12px">${esc(t('stSource'))}</div>`;
-  h += `<div style="margin:0 0 18px"><button class="btn primary" id="wrappedBtn">${esc(t('wrappedBtn'))}</button></div>`;
+  if (d.source === 'transcripts') h += `<div class="stats-source">${esc(t('stSource'))}</div>`;
+  h += '<div class="stats-grid">';
 
   // 每日消息量，单一系列：单色 + 峰值直接标注 + 悬浮提示 + 时间范围切换
   const recent = statsRange ? days.slice(-statsRange) : days;
@@ -1612,7 +1450,7 @@ function statsHTML(d) {
       + `<td class="num">$${(tt.cost || 0).toFixed(2)}${tt.costKnown ? '' : ' *'}</td></tr>`;
     h += `</tbody></table></div><div style="font-size:11.5px;color:var(--muted);margin-top:10px">${esc(t('stCostNote'))}</div></div>`;
   }
-  return h;
+  return h + '</div>';
 }
 
 // ---------- 语言切换 ----------
@@ -1621,7 +1459,13 @@ function applyLang() {
   const sel = $('#langSel');
   if (!sel.options.length) LANGS.forEach(l => sel.add(new Option(l.label, l.code)));
   sel.value = lang;
-  document.querySelectorAll('.tab').forEach(tb => { tb.firstChild.textContent = t('tabs')[tb.dataset.type]; });
+  document.querySelectorAll('.tab').forEach(tb => { tb.querySelector('.nav-label').textContent = t('tabs')[tb.dataset.type]; });
+  document.querySelectorAll('[data-nav-group]').forEach(el => { el.textContent = el.dataset.navGroup === '工作空间' ? ui('工作空间', 'Workspace', 'ワークスペース') : ui('资源管理', 'Resources', 'リソース'); });
+  $('#localLabel').textContent = ui('本地工作区', 'Local workspace', 'ローカル環境');
+  $('#libraryToggle').setAttribute('aria-label', ui('打开资源列表', 'Open resource list', 'リソース一覧を開く'));
+  $('#search').setAttribute('aria-label', t('search'));
+  $('#projSel').setAttribute('aria-label', ui('项目作用域', 'Project scope', 'プロジェクト'));
+  updateWorkspaceChrome();
   $('#search').placeholder = t('search');
   document.querySelector('.fbtn[data-origin="user"]').textContent = t('mineOnly');
   document.querySelector('.fbtn[data-origin="all"]').textContent = t('all');
@@ -1633,12 +1477,12 @@ function applyLang() {
   $('#saveBtn').textContent = t('save');
   $('#cancelBtn').textContent = t('cancel');
   $('#delBtn').textContent = state.type === 'plugins' ? t('uninstall') : t('del');
-  $('#empty').textContent = t('emptyHint');
+  emptyState();
   $('#newName').placeholder = t('namePh');
   $('#modalCancel').textContent = t('cancel');
   $('#modalCreate').textContent = t('create');
   renderProjOptions();
-  if (!state.current) $('#title').firstChild.textContent = t('noSelection');
+  if (!state.current) $('#title').firstChild.textContent = t('tabs')[state.type];
 }
 
 async function setLang(code) {
@@ -1648,9 +1492,12 @@ async function setLang(code) {
   applyLang();
   // 重新拉取本地化的列表与详情
   if (state.type === 'proxy') { await renderProxyTab(); return; }
+  if (state.type === 'voyage') { await renderVoyage(); return; }
   if (CAPS[state.type].dashboard) { await renderStatsTab(); loadCounts(); return; }
   const cur = state.current;
-  const { items } = await api('GET', state.type);
+  const type = state.type;
+  const { items } = await api('GET', type);
+  if (state.type !== type) return;
   state.items = items;
   renderList();
   loadCounts();
@@ -1666,6 +1513,7 @@ async function renderProxyTab() {
   try {
     routeData = await api('GET', 'proxy');
     if (state.type !== 'proxy') return;
+    updateWorkspaceChrome();
     state.items = [];
     $('#empty').style.display = 'none';
     $('#title').firstChild.textContent = t('tabs').proxy;
@@ -1677,7 +1525,7 @@ async function renderProxyTab() {
     $('#list').innerHTML = '';
     $('#route-dialog')?.remove();
     $('#render').innerHTML = `
-      <div class="route-heading"><div><h2>${esc(rt('账号管理', 'Accounts'))}</h2><p class="route-muted">${esc(rt('一次接入，随时切换。Claude 会自动使用你选择的账号。', 'Connect once. Switch accounts whenever you need.'))}</p></div><button class="btn primary" id="route-add">＋ ${esc(rt('添加账号', 'Add account'))}</button></div>
+      ${viewHeading('proxy', `<button class="btn primary" id="route-add">＋ ${esc(rt('添加账号', 'Add account'))}</button>`)}
       <div class="chart route-connect" id="route-connect"></div>
       <div id="route-notice" role="status"></div>
       <div class="route-heading route-controls"><h3>${esc(rt('我的账号', 'My accounts'))} <span id="route-count" class="route-muted"></span></h3><label>${esc(rt('使用方式', 'Strategy'))} <select id="route-mode"><option value="manual">${esc(rt('手动切换', 'Manual'))}</option><option value="failover">${esc(rt('优先使用，故障自动切换', 'Priority with failover'))}</option><option value="round-robin">${esc(rt('多个账号轮流使用', 'Round robin'))}</option></select></label></div>
@@ -1825,7 +1673,7 @@ async function renderProxyTab() {
 
 // ---------- 初始化 ----------
 applyLang();
-switchType('commands');
+switchType(CAPS[localStorage.getItem('panel-section')] ? localStorage.getItem('panel-section') : 'stats');
 loadCounts();
 loadProjects();
 </script>

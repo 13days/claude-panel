@@ -120,10 +120,12 @@ CLAUDE_DIR="$PWD/demo-data/claude" PORT=4999 node server.js
 
 ## How it works
 
-Two files, no framework, no build step:
+No framework, no build step:
 
 - **`server.js`** — dependency-free Node HTTP server: a REST API over `CLAUDE_DIR` (guarded writes), a transcript-based usage aggregator with an mtime-keyed cache, and a reverse proxy on `PROXY_PORT` that records each `/v1/messages` round-trip (decompressing gzip/br), keyed by response message id.
-- **`index.html`** — single-page UI with its own tiny Markdown renderer and CSS charts.
+- **`index.html`** — single-page UI with a Markdown renderer, SVG icons and interactions.
+- **`panel.css`** — shared design tokens, navigation, responsive layout, charts, forms and dialogs.
+- **`proxy-router.js`** — multi-account persistence, streaming proxy and failover.
 
 ### Adding a language
 
@@ -157,3 +159,7 @@ Authentication errors, exhausted credits (402), rate limits, selected server err
 Account secrets live in `CLAUDE_DIR/panel-proxy.json` with mode `600` and are omitted from account status responses. Model maps accept exact names, substrings such as `sonnet`, and `*` as a fallback. The full env is saved, including empty strings and additional flags. When you select an account, extra env variables are applied to Claude settings and require a Claude restart. Switching away restores previous values or removes newly added variables. Automatic failover and round robin switch upstreams while client env stays on the selected profile. Status responses expose variable names only, never stored env values. Pass-through authentication requires real client credentials and cannot use the local placeholder token; OAuth is not emulated. Restore your previous env from `settings.json.proxy-backup-*` to disconnect from the proxy.
 
 Run `npm test` for local upstream integration tests (no real API credentials required).
+
+### 0.15.1 interface refresh
+
+A consistent visual system across all eleven sections: grouped navigation, a separate resource library, full-width overview pages, shared form and dialog styling, and a mobile resource drawer. The panel opens on the usage overview and remembers your last section. Fixes stale lists and metadata, late responses overwriting another section, Voyage language switching, and navigation with unsaved edits.

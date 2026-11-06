@@ -1,6 +1,6 @@
 {
   "name": "claude-code-panel",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "description": "Claude Code 零依赖本地面板：多账号动态代理、env 配置管理、自动故障转移、请求抓包、会话回放与 Token 用量统计",
   "main": "server.js",
   "bin": {
@@ -36,6 +36,7 @@
     "server.js",
     "index.html",
     "scripts/gen-demo-data.py",
-    "proxy-router.js"
+    "proxy-router.js",
+    "panel.css"
   ]
 }
