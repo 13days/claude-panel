@@ -9,7 +9,6 @@
  *   - Agent ~/.claude/agents/<name>.md
  */
 const http = require('http');
-const https = require('https');
 const zlib = require('zlib');
 const fs = require('fs');
 const path = require('path');
@@ -1416,10 +1415,11 @@ function summarizeMessage(m) {
   return { role: m.role, parts };
 }
 
-function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream, reqHeaders, resEncoding) {
+function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream, reqHeaders, resEncoding, upstreamId, upstreamName) {
   resBody = decodeBody(resBody, resEncoding);
   const ua = (reqHeaders && (reqHeaders['user-agent'] || reqHeaders['User-Agent'])) || '';
   let rec = {
+    upstreamId: upstreamId || '', upstreamName: upstreamName || '',
     id: ++_inspectSeq, ts: new Date().toISOString(), path: reqPath, status, durationMs,
     model: '', system: '', tools: [], messagesCount: 0, lastUser: '', respMsgId: '',
     userAgent: ua.slice(0, 300), clientVersion: parseClientVersion(ua),
@@ -1467,39 +1467,10 @@ function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream,
   persistCapture(rec);
 }
 
-const proxyServer = http.createServer((req, res) => {
-  const chunks = [];
-  req.on('data', c => chunks.push(c));
-  req.on('end', () => {
-    const body = Buffer.concat(chunks);
-    const started = Date.now();
-    const headers = { ...req.headers, host: 'api.anthropic.com' };
-    delete headers['content-length'];
-    if (body.length) headers['content-length'] = body.length;
-    const up = https.request({
-      hostname: 'api.anthropic.com', port: 443, path: req.url, method: req.method, headers,
-    }, ur => {
-      res.writeHead(ur.statusCode, ur.headers);
-      const rchunks = [];
-      let rlen = 0;
-      ur.on('data', c => {
-        res.write(c);
-        if (rlen < 8e6) { rchunks.push(c); rlen += c.length; } // 记录上限 8MB
-      });
-      ur.on('end', () => {
-        res.end();
-        if (req.url.includes('/messages')) {
-          const isStream = String(ur.headers['content-type'] || '').includes('event-stream');
-          try { recordExchange(req.url, ur.statusCode, Date.now() - started, body, Buffer.concat(rchunks), isStream, req.headers, ur.headers['content-encoding']); } catch {}
-        }
-      });
-    });
-    up.on('error', e => {
-      try { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('proxy error: ' + e.message); } catch {}
-    });
-    up.end(body);
-  });
+const accountRouter = require('./proxy-router').createRouter({
+  dir: CLAUDE_DIR, port: PROXY_PORT, record: recordExchange,
 });
+const proxyServer = http.createServer(accountRouter.handle);
 loadCaptures();
 proxyServer.on('error', e => {
   // 端口被占等情况：只关掉 Inspector，别拖垮整个面板
@@ -1527,6 +1498,25 @@ const server = http.createServer(async (req, res) => {
     }
 
     const type = parts[1];
+
+    // Account credentials are only available through same-origin JSON management requests.
+    if (type === 'proxy') {
+      const allowedHosts = [`localhost:${PORT}`, `127.0.0.1:${PORT}`];
+      const origin = req.headers.origin;
+      if (!allowedHosts.includes(req.headers.host) || (origin && !allowedHosts.some(h => origin === `http://${h}`)) || req.headers['sec-fetch-site'] === 'cross-site') {
+        return sendJSON(res, 403, { error: '仅允许本机页面管理代理' });
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      if (req.method === 'GET' && parts.length === 2) return sendJSON(res, 200, accountRouter.status());
+      if (!String(req.headers['content-type'] || '').startsWith('application/json')) return sendJSON(res, 415, { error: '需要 application/json' });
+      try {
+        if (req.method === 'PUT' && parts.length === 2) return sendJSON(res, 200, accountRouter.save(JSON.parse(await readBody(req))));
+        if (req.method === 'POST' && parts[2] === 'import') return sendJSON(res, 200, accountRouter.importSettings());
+        if (req.method === 'POST' && parts[2] === 'setup') return sendJSON(res, 200, accountRouter.setup());
+        if (req.method === 'POST' && parts[2] === 'reset') return sendJSON(res, 200, accountRouter.reset());
+        return sendJSON(res, 405, { error: 'method not allowed' });
+      } catch (e) { return sendJSON(res, 400, { error: e instanceof SyntaxError ? 'JSON 格式无效' : e.message }); }
+    }
 
     // ---- 项目列表 ----
     if (type === 'projects' && req.method === 'GET') {
@@ -1607,7 +1597,7 @@ const server = http.createServer(async (req, res) => {
           items: _inspect.map(r => ({
             key: String(r.id),
             name: `${shortModel(r.model || '?')} · ${r.status}`,
-            description: `${r.ts.slice(11, 19)}${r.clientVersion ? ' · cli ' + r.clientVersion : ''} · ${r.messagesCount} msgs · ${Math.round(r.durationMs / 1000)}s${r.thinking ? ' · 💭' : ''}`,
+            description: `${r.upstreamName ? r.upstreamName + ' · ' : ''}${r.ts.slice(11, 19)}${r.clientVersion ? ' · cli ' + r.clientVersion : ''} · ${r.messagesCount} msgs · ${Math.round(r.durationMs / 1000)}s${r.thinking ? ' · 💭' : ''}`,
             origin: 'user',
           })),
         });

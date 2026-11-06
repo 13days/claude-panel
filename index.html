@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Claude Panel</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23d97b4f'/%3E%3Cpath d='m17 20 13 12-13 12M35 44h13' fill='none' stroke='%23171a21' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
   :root {
     --bg: #0f1115; --panel: #171a21; --panel2: #1d212b; --border: #2a2f3a;
@@ -19,6 +20,57 @@
   #logo span { color: var(--accent); margin-left: 4px; }
   #langSel { padding: 6px 8px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font-size: 12.5px; cursor: pointer; outline: none; }
   #langSel:hover, #langSel:focus { border-color: var(--accent); }
+  #route-form input, #route-form textarea, #route-form select, #route-mode { padding: 9px 11px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font: inherit; min-width: 0; }
+  #route-form input:focus, #route-form textarea:focus, #route-form select:focus, #route-mode:focus { outline: 1px solid var(--accent); }
+  #route-form textarea { display: block; margin-top: 8px; resize: vertical; font-family: ui-monospace, monospace; }
+  #route-form summary { cursor: pointer; color: var(--accent2); }
+  #route-accounts p { overflow-wrap: anywhere; }
+  #route-notice { color: var(--green); overflow-wrap: anywhere; }
+  .route-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+  #render .route-heading h2, #render .route-heading h3 { margin: 0; }
+  .route-muted { color: var(--muted); font-size: 13px; }
+  .route-connect { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 24px; }
+  #render .route-connect h3 { margin: 0 0 8px; font-size: 17px; }
+  .route-connect > .btn { flex-shrink: 0; padding: 11px 24px; }
+  .route-controls { margin-top: 30px; margin-bottom: 14px; }
+  .route-account { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+  .route-account.is-active { border-color: var(--accent); background: rgba(217,123,79,.045); }
+  .route-account-main { min-width: 0; }
+  .route-account-title, .route-account-actions { display: flex; align-items: center; gap: 10px; }
+  #render .route-account h3 { margin: 0; font-size: 16px; }
+  .route-account-actions { flex-shrink: 0; }
+  .route-badge { display: inline-block; font-size: 12px; color: var(--green); background: rgba(79,174,122,.1); border-radius: 20px; padding: 3px 10px; white-space: nowrap; }
+  .route-badge.is-muted { color: var(--muted); background: var(--panel2); }
+  .route-empty { padding: 42px 20px; text-align: center; border: 1px dashed var(--border); border-radius: 12px; }
+  #render .route-empty h3 { margin-top: 0; }
+  .route-more { position: relative; }
+  .route-more > summary { cursor: pointer; list-style: none; padding: 6px 10px; color: var(--muted); }
+  .route-more > div { position: absolute; right: 0; top: 100%; z-index: 5; display: grid; gap: 6px; min-width: 160px; padding: 10px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px #0005; }
+  .route-foot { display: flex; align-items: center; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
+  .route-foot > span { flex: 1; }
+  #route-dialog { margin: auto; width: min(560px, calc(100vw - 32px)); max-height: 90vh; overflow-y: auto; padding: 28px; border: 1px solid var(--border); border-radius: 16px; background: var(--panel); color: var(--text); box-shadow: 0 24px 80px #0008; }
+  #route-dialog::backdrop { background: #0009; backdrop-filter: blur(3px); }
+  #route-form { display: grid; gap: 18px; }
+  #route-form .route-heading { margin: 0; }
+  #route-form label { display: block; font-size: 13px; }
+  #route-form input, #route-form textarea, #route-form select { display: block; width: 100%; margin-top: 7px; }
+  #route-form details { font-size: 13px; }
+  #route-form details label { margin-top: 16px; }
+  #route-parse { margin-top: 10px; }
+  .route-dialog-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .route-paste-title { font-weight: 600; }
+  #route-preview { padding: 10px 12px; border: 1px solid rgba(79,174,122,.3); border-radius: 8px; color: var(--green); background: rgba(79,174,122,.06); font-size: 12px; overflow-wrap: anywhere; }
+  .route-or { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 12px; }
+  .route-or::before, .route-or::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
+  #route-example { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+  #route-example pre { font-size: 11px; background: var(--code-bg); padding: 12px; border-radius: 8px; margin: 10px 0; overflow-x: auto; white-space: pre-wrap; }
+  #route-env { font-size: 12px !important; }
+  #route-form-error { color: var(--danger); font-size: 13px; }
+  #route-form-error:empty, #route-notice:empty { display: none; }
+  #route-notice:not(:empty) { padding: 16px 20px; margin: 16px 0; background: rgba(79,174,122,.08); border-radius: 10px; }
+  #route-notice details { color: var(--muted); font-size: 12px; }
+  @media (max-width: 900px) { .route-account, .route-connect, .route-controls { align-items: flex-start; flex-direction: column; } .route-account-actions { width: 100%; } }
+
   #tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 12px; }
   .tab { flex: 1 1 28%; text-align: center; padding: 7px 0; border-radius: 8px; cursor: pointer; font-size: 13px; color: var(--muted); background: var(--panel2); border: 1px solid transparent; user-select: none; white-space: nowrap; }
   .tab.active { color: var(--text); border-color: var(--accent); background: rgba(217,123,79,.12); }
@@ -211,6 +263,7 @@
     <div class="tab" data-type="plugins">插件<span class="cnt"></span></div>
     <div class="tab" data-type="config">配置<span class="cnt"></span></div>
     <div class="tab" data-type="workflows">工作流<span class="cnt"></span></div>
+    <div class="tab" data-type="proxy">账号路由<span class="cnt"></span></div>
     <div class="tab" data-type="inspector">抓包<span class="cnt"></span></div>
     <div class="tab" data-type="sessions">会话<span class="cnt"></span></div>
     <div class="tab" data-type="voyage">航程<span class="cnt"></span></div>
@@ -291,7 +344,7 @@ const LANGS = [
 const DEFAULT_LANG = 'zh';
 const I18N = {
   zh: {
-    tabs: { commands: '/ 命令', skills: '技能', agents: '智能体', plugins: '插件', config: '配置', workflows: '工作流', inspector: '抓包', sessions: '会话', voyage: '航程', stats: '统计' },
+    tabs: { proxy: '账号路由', commands: '/ 命令', skills: '技能', agents: '智能体', plugins: '插件', config: '配置', workflows: '工作流', inspector: '抓包', sessions: '会话', voyage: '航程', stats: '统计' },
     typeLabel: { commands: '命令', skills: '技能', agents: '智能体', plugins: '插件', config: '配置', workflows: '工作流', inspector: '请求', sessions: '会话', voyage: '航程', stats: '统计' },
     search: '搜索名称 / 描述…', mineOnly: '仅自建', all: '全部',
     newBtn: '＋ 新建', edit: '编辑', save: '保存', cancel: '取消', del: '删除', uninstall: '卸载', create: '创建',
@@ -345,7 +398,7 @@ const I18N = {
     },
   },
   en: {
-    tabs: { commands: '/ Commands', skills: 'Skills', agents: 'Agents', plugins: 'Plugins', config: 'Config', workflows: 'Workflows', inspector: 'Inspector', sessions: 'Sessions', voyage: 'Voyage', stats: 'Stats' },
+    tabs: { proxy: 'Account routing', commands: '/ Commands', skills: 'Skills', agents: 'Agents', plugins: 'Plugins', config: 'Config', workflows: 'Workflows', inspector: 'Inspector', sessions: 'Sessions', voyage: 'Voyage', stats: 'Stats' },
     typeLabel: { commands: 'command', skills: 'skill', agents: 'agent', plugins: 'plugin', config: 'config', workflows: 'workflow', inspector: 'request', sessions: 'session', voyage: 'voyage', stats: 'stats' },
     search: 'Search name / description…', mineOnly: 'Mine', all: 'All',
     newBtn: '＋ New', edit: 'Edit', save: 'Save', cancel: 'Cancel', del: 'Delete', uninstall: 'Uninstall', create: 'Create',
@@ -399,7 +452,7 @@ const I18N = {
     },
   },
   ja: {
-    tabs: { commands: '/ コマンド', skills: 'スキル', agents: 'エージェント', plugins: 'プラグイン', config: '設定', workflows: 'ワークフロー', inspector: 'キャプチャ', sessions: 'セッション', voyage: '航海', stats: '統計' },
+    tabs: { proxy: 'アカウントルーティング', commands: '/ コマンド', skills: 'スキル', agents: 'エージェント', plugins: 'プラグイン', config: '設定', workflows: 'ワークフロー', inspector: 'キャプチャ', sessions: 'セッション', voyage: '航海', stats: '統計' },
     typeLabel: { commands: 'コマンド', skills: 'スキル', agents: 'エージェント', plugins: 'プラグイン', config: '設定', workflows: 'ワークフロー', inspector: 'リクエスト', sessions: 'セッション', voyage: '航海', stats: '統計' },
     search: '名前 / 説明を検索…', mineOnly: '自作のみ', all: 'すべて',
     newBtn: '＋ 新規', edit: '編集', save: '保存', cancel: 'キャンセル', del: '削除', uninstall: 'アンインストール', create: '作成',
@@ -466,6 +519,7 @@ const CAPS = {
   plugins:  { new: false, edit: false, del: true,  filter: false },
   config:   { new: false, edit: true,  del: false, filter: false },
   workflows: { new: true, edit: true, del: true, filter: false },
+  proxy: { new: false, edit: false, del: false, filter: false, dashboard: true },
   inspector: { new: false, edit: false, del: false, filter: false },
   sessions: { new: false, edit: false, del: false, filter: false },
   voyage:   { new: false, edit: false, del: false, filter: false, dashboard: true },
@@ -524,6 +578,7 @@ async function switchType(type) {
   $('#filterbar').style.display = CAPS[type].filter ? 'flex' : 'none';
   $('#delBtn').textContent = type === 'plugins' ? t('uninstall') : t('del');
   showEmpty();
+  if (type === 'proxy') { await renderProxyTab(); return; }
   if (type === 'voyage') { await renderVoyage(); return; }
   if (CAPS[type].dashboard) { await renderStatsTab(); return; }
   if (type === 'inspector') startInspectorPoll(); else stopInspectorPoll();
@@ -1592,6 +1647,7 @@ async function setLang(code) {
   localStorage.setItem('panel-lang', lang);
   applyLang();
   // 重新拉取本地化的列表与详情
+  if (state.type === 'proxy') { await renderProxyTab(); return; }
   if (CAPS[state.type].dashboard) { await renderStatsTab(); loadCounts(); return; }
   const cur = state.current;
   const { items } = await api('GET', state.type);
@@ -1601,6 +1657,171 @@ async function setLang(code) {
   if (cur && !state.editing) openItem(cur);
 }
 $('#langSel').onchange = e => setLang(e.target.value);
+
+// ---------- Runtime account routing ----------
+const rt = (zh, en) => lang === 'zh' || lang === 'zh-CN' ? zh : en;
+let routeData;
+async function renderProxyTab() {
+  stopInspectorPoll();
+  try {
+    routeData = await api('GET', 'proxy');
+    if (state.type !== 'proxy') return;
+    state.items = [];
+    $('#empty').style.display = 'none';
+    $('#title').firstChild.textContent = t('tabs').proxy;
+    $('#fpath').textContent = '';
+    $('#editBtn').disabled = $('#delBtn').disabled = true;
+    setEditMode(false);
+    $('#metabar').style.display = 'none';
+    $('#render').classList.add('wide');
+    $('#list').innerHTML = '';
+    $('#route-dialog')?.remove();
+    $('#render').innerHTML = `
+      <div class="route-heading"><div><h2>${esc(rt('账号管理', 'Accounts'))}</h2><p class="route-muted">${esc(rt('一次接入，随时切换。Claude 会自动使用你选择的账号。', 'Connect once. Switch accounts whenever you need.'))}</p></div><button class="btn primary" id="route-add">＋ ${esc(rt('添加账号', 'Add account'))}</button></div>
+      <div class="chart route-connect" id="route-connect"></div>
+      <div id="route-notice" role="status"></div>
+      <div class="route-heading route-controls"><h3>${esc(rt('我的账号', 'My accounts'))} <span id="route-count" class="route-muted"></span></h3><label>${esc(rt('使用方式', 'Strategy'))} <select id="route-mode"><option value="manual">${esc(rt('手动切换', 'Manual'))}</option><option value="failover">${esc(rt('优先使用，故障自动切换', 'Priority with failover'))}</option><option value="round-robin">${esc(rt('多个账号轮流使用', 'Round robin'))}</option></select></label></div>
+      <div id="route-accounts"></div>
+      <div class="route-foot"><span class="route-muted">${esc(rt('切换对下一次请求生效，正在生成的回复不受影响。', 'Changes apply to the next request. Active responses continue uninterrupted.'))}</span><button class="btn" id="route-refresh">${esc(rt('刷新', 'Refresh'))}</button><button class="btn" id="route-reset">${esc(rt('重置故障状态', 'Reset failures'))}</button></div>`;
+    const dialog = document.createElement('dialog'); dialog.id = 'route-dialog';
+    const envExample = { env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8790', ANTHROPIC_AUTH_TOKEN: 'ferry', ANTHROPIC_API_KEY: '', CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: '1', CLAUDE_CODE_AUTO_MODE_SERVER: '0' } };
+    dialog.innerHTML = `<form id="route-form"><div class="route-heading"><h2 id="route-form-title">${esc(rt('添加账号', 'Add account'))}</h2><button class="btn" type="button" id="route-cancel" aria-label="${esc(rt('关闭', 'Close'))}">✕</button></div>
+      <div><label for="route-env" class="route-paste-title">${esc(rt('粘贴你的 env 配置', 'Paste your env configuration'))} <span class="route-badge">${esc(rt('推荐', 'Recommended'))}</span></label><p class="route-muted">${esc(rt('从 Claude 的 settings.json 复制 env，整份配置或单独一段 env 都可以。', 'Copy env from Claude settings.json. A full settings file or an env fragment both work.'))}</p><textarea id="route-env" rows="7" spellcheck="false" aria-label="env JSON" placeholder='"env": {
+  "ANTHROPIC_BASE_URL": "https://your-gateway.example.com",
+  "ANTHROPIC_AUTH_TOKEN": "your-token"
+}'></textarea><p class="route-muted">${esc(rt('粘贴后自动识别，其他环境变量也会完整保存。', 'Parsed automatically after pasting. Additional environment variables are saved too.'))}</p></div>
+      <details id="route-example"><summary>${esc(rt('不知道怎么填？查看配置示例', 'Need help? View a configuration example'))}</summary><p class="route-muted">${esc(rt('下面是 Ferry 本地网关的示例。换成你自己的地址和 Token 即可；有更多 env 变量也可以一起粘贴。', 'This example uses a local Ferry gateway. Replace the URL and token with your own. You can include other env variables too.'))}</p><pre><code>${esc(JSON.stringify(envExample, null, 2))}</code></pre><button class="btn" type="button" id="route-use-example">${esc(rt('用此示例填入', 'Fill with this example'))}</button></details>
+      <p id="route-preview" role="status" hidden></p>
+      <div class="route-or"><span>${esc(rt('或', 'OR'))}</span></div>
+      <details id="route-manual"><summary>${esc(rt('手动填写地址和 Token', 'Enter URL and token manually'))}</summary>
+      <label>${esc(rt('服务地址', 'Service URL'))}<input id="route-url" type="url" placeholder="https://your-gateway.example.com"></label>
+      <label>Token<input id="route-token" type="password" autocomplete="new-password" placeholder="${esc(rt('粘贴账号的 Token', 'Paste your account token'))}"></label>
+      <details id="route-advanced"><summary>${esc(rt('高级设置', 'Advanced settings'))}</summary><label>${esc(rt('认证方式', 'Authentication'))}<select id="route-auth"><option value="bearer">ANTHROPIC_AUTH_TOKEN (Bearer)</option><option value="api-key">ANTHROPIC_API_KEY (x-api-key)</option><option value="passthrough">${esc(rt('透传客户端凭证', 'Pass through client credentials'))}</option></select></label><label>${esc(rt('模型映射（选填）', 'Model mapping (optional)'))}<textarea id="route-models" rows="3" spellcheck="false" placeholder='{"sonnet":"upstream-model-id"}'>{}</textarea></label></details></details>
+      <label>${esc(rt('账号名称', 'Account name'))}<span class="route-muted"> · ${esc(rt('选填，留空自动命名', 'optional, generated automatically'))}</span><input id="route-name" maxlength="100" placeholder="${esc(rt('例如：工作账号、备用账号', 'e.g. Work, Backup'))}"></label>
+      <p id="route-env-hint" class="route-muted">${esc(rt('地址、凭证和模型由代理动态切换；其他 env 变量在选择该账号时写入 Claude 配置，重开 Claude 生效。自动故障转移只切换上游。', 'The proxy switches URLs, credentials and models dynamically. Other env variables are applied to Claude settings when you select this account; restart Claude to load them. Automatic failover switches upstreams only.'))}</p>
+      <p id="route-form-error" role="alert"></p><div class="route-dialog-footer"><span class="route-muted">${esc(rt('凭证只保存在你的电脑上', 'Credentials stay on your computer'))}</span><button class="btn primary" id="route-submit" type="submit">${esc(rt('保存账号', 'Save account'))}</button></div></form>`;
+    document.body.appendChild(dialog);
+    let editing = '', busy = false, parsedEnv, parseTimer;
+    const run = async fn => { try { await fn(); } catch (e) { toast(e.message, false); } };
+    const save = async next => {
+      routeData = await api('PUT', 'proxy', next); draw();
+      if (routeData.restartRequired) { $('#route-notice').textContent = rt('账号配置已保存，额外环境变量已写入 Claude 配置。请重开 Claude 使这些变量生效。', 'Saved. Additional environment variables were applied to Claude settings. Restart Claude to load them.'); }
+      toast(routeData.restartRequired ? rt('已保存，请重开 Claude 加载环境变量', 'Saved. Restart Claude to load env changes.') : rt('已保存', 'Saved'));
+    };
+    function draw() {
+      const c = routeData.connection;
+      $('#route-count').textContent = `(${routeData.accounts.length})`;
+      $('#route-mode').value = routeData.mode;
+      $('#route-connect').innerHTML = c.connected
+        ? `<div><span class="route-badge">● ${esc(rt('已接入本地代理', 'Connected'))}</span><p class="route-muted">${esc(rt('选择下方账号即可切换，使用时保持面板运行。', 'Choose an account below to switch. Keep the panel running.'))}</p></div>`
+        : `<div><h3>${esc(rt('让 Claude 用上多账号', 'Connect Claude to your accounts'))}</h3><p>${esc(c.canImport ? rt('已检测到当前配置：', 'Current configuration found: ') + c.currentHost : rt('添加账号后，一键将 Claude 接入本地代理。', 'Add an account, then connect Claude in one click.'))}</p><p class="route-muted">${esc(rt('自动保存当前账号、备份原配置，并完成代理接入。', 'Saves your current account, backs up settings, and connects the proxy automatically.'))}</p></div><button class="btn primary" id="route-setup" ${!c.canImport && !routeData.accounts.some(a => a.enabled && a.authType !== 'passthrough') ? 'disabled' : ''}>${esc(rt('一键配置', 'Set up in one click'))}</button>`;
+      const setupButton = $('#route-setup');
+      if (setupButton) setupButton.onclick = () => run(async () => {
+        setupButton.disabled = true; setupButton.textContent = rt('正在配置…', 'Setting up…');
+        try {
+          const result = await api('POST', 'proxy/setup', {});
+          routeData = await api('GET', 'proxy'); draw();
+          const notice = $('#route-notice'); notice.replaceChildren();
+          const message = document.createElement('p'); message.textContent = rt('配置完成！重开一次 Claude 即可使用，之后切换账号无需重启。', 'All set! Restart Claude once. Future account switches need no restart.'); notice.append(message);
+          if (result.backup) { const details = document.createElement('details'); const summary = document.createElement('summary'); summary.textContent = rt('查看配置备份与接入说明', 'Backup and connection details'); details.append(summary); const p = document.createElement('p'); p.textContent = rt('原配置备份：', 'Settings backup: ') + result.backup; details.append(p); const hint = document.createElement('p'); hint.textContent = rt('如果终端或项目配置单独设置了 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY，请移除这些覆盖项。', 'Remove shell or project overrides for ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY.'); details.append(hint); notice.append(details); }
+        } finally { if (setupButton.isConnected) { setupButton.disabled = false; setupButton.textContent = rt('一键配置', 'Set up in one click'); } }
+      });
+      $('#route-accounts').innerHTML = routeData.accounts.length ? routeData.accounts.map((a, i) => {
+        const active = routeData.mode === 'manual' && routeData.selected === a.id;
+        const cooling = (a.cooldownUntil || 0) > Date.now();
+        const label = !a.enabled ? rt('已停用', 'Disabled') : cooling ? rt('稍后重试', 'Cooling down') : active ? rt('使用中', 'In use') : rt('可用', 'Ready');
+        return `<div class="route-account ${active ? 'is-active' : ''}" data-account="${esc(a.id)}"><div class="route-account-main"><div class="route-account-title"><h3>${esc(a.name)}</h3><span class="route-badge ${!a.enabled || cooling ? 'is-muted' : ''}">${esc(label)}</span></div><p class="route-muted">${esc(a.url)}</p>${a.clientEnvKeys?.length ? `<p class="route-muted">${esc(rt('附带环境变量：', 'Additional env: '))}${esc(a.clientEnvKeys.join(', '))}</p>` : ''}${cooling ? `<p class="route-muted">${esc(rt('自动切换模式下暂时跳过此账号，可点击「重置故障状态」重试。', 'Temporarily skipped in automatic modes. Reset failures to retry.'))}</p>` : ''}</div><div class="route-account-actions"><button class="btn ${active ? '' : 'primary'}" data-action="use" ${!a.enabled || active ? 'disabled' : ''}>${esc(active ? rt('正在使用', 'In use') : rt('使用此账号', 'Use account'))}</button><button class="btn" data-action="edit">${esc(rt('编辑', 'Edit'))}</button><details class="route-more"><summary aria-label="${esc(rt('更多操作', 'More actions'))}">•••</summary><div><button class="btn" data-action="toggle">${esc(a.enabled ? rt('停用账号', 'Disable') : rt('启用账号', 'Enable'))}</button><button class="btn" data-action="up" ${i === 0 ? 'disabled' : ''}>↑ ${esc(rt('提高优先级', 'Move up'))}</button><button class="btn" data-action="down" ${i === routeData.accounts.length - 1 ? 'disabled' : ''}>↓ ${esc(rt('降低优先级', 'Move down'))}</button><button class="btn danger" data-action="delete">${esc(rt('删除账号', 'Delete'))}</button></div></details></div></div>`;
+      }).join('') : `<div class="route-empty"><h3>${esc(rt('还没有账号', 'No accounts yet'))}</h3><p class="route-muted">${esc(c.canImport ? rt('点击上方「一键配置」，自动添加 Claude 当前使用的账号。', 'Click setup above to add your current Claude account automatically.') : rt('点击「添加账号」，填入服务地址和 Token 即可。', 'Click Add account and enter a service URL and token.'))}</p></div>`;
+    }
+    function openForm(account) {
+      $('#route-form').reset(); $('#route-models').value = '{}'; $('#route-form-error').textContent = '';
+      $('#route-manual').open = !!account; $('#route-example').open = $('#route-advanced').open = false;
+      parsedEnv = undefined; clearTimeout(parseTimer); $('#route-preview').hidden = true;
+      editing = account?.id || '';
+      $('#route-form-title').textContent = account ? rt('编辑账号', 'Edit account') : rt('添加账号', 'Add account');
+      $('#route-token').required = false;
+      $('#route-token').placeholder = account ? rt('留空保留原 Token', 'Leave blank to keep your token') : rt('粘贴账号的 Token', 'Paste your account token');
+      if (account) { $('#route-name').value = account.name; $('#route-url').value = account.url; $('#route-auth').value = account.authType; $('#route-models').value = JSON.stringify(account.modelMap, null, 2); }
+      dialog.showModal();
+      (account ? $('#route-name') : $('#route-env')).focus();
+    }
+    function closeForm() { clearTimeout(parseTimer); parsedEnv = undefined; $('#route-token').value = ''; $('#route-env').value = ''; dialog.close(); }
+    dialog.addEventListener('cancel', e => { e.preventDefault(); closeForm(); });
+    dialog.addEventListener('close', () => { $('#route-token').value = ''; $('#route-env').value = ''; });
+    dialog.addEventListener('click', e => { if (e.target === dialog) { const rect = dialog.getBoundingClientRect(); if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) closeForm(); } });
+    $('#route-add').onclick = () => openForm();
+    $('#route-cancel').onclick = closeForm;
+    function readEnv(showError = true) {
+      parsedEnv = undefined;
+      const preview = $('#route-preview'); preview.hidden = true;
+      const raw = $('#route-env').value.trim().replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```$/, '').trim();
+      if (!raw) { if (showError) throw new Error(rt('请先粘贴 env，或展开「手动填写」输入地址和 Token。', 'Paste env JSON, or expand manual entry to enter a URL and token.')); return; }
+      try {
+        let parsed; try { parsed = JSON.parse(raw); } catch { parsed = JSON.parse('{' + raw.replace(/,\s*$/, '') + '}'); }
+        const env = parsed.env ?? parsed;
+        if (!env || typeof env !== 'object' || Array.isArray(env) || !(env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY)) throw new Error();
+        for (const [key, value] of Object.entries(env)) {
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || ['__proto__', 'constructor', 'prototype'].includes(key) || !['string', 'number', 'boolean'].includes(typeof value)) throw new Error();
+        }
+        const url = new URL(env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com');
+        if (!['https:', 'http:'].includes(url.protocol)) throw new Error();
+        $('#route-url').value = url.href.replace(/\/$/, '');
+        $('#route-token').value = env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY;
+        $('#route-auth').value = env.ANTHROPIC_AUTH_TOKEN ? 'bearer' : 'api-key';
+        const map = {};
+        const routing = ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'];
+        for (const [key, family] of [['ANTHROPIC_DEFAULT_OPUS_MODEL', 'opus'], ['ANTHROPIC_DEFAULT_SONNET_MODEL', 'sonnet'], ['ANTHROPIC_DEFAULT_HAIKU_MODEL', 'haiku'], ['ANTHROPIC_MODEL', '*']]) if (env[key]) map[family] = env[key];
+        $('#route-models').value = JSON.stringify(map, null, 2);
+        parsedEnv = env;
+        const extra = Object.keys(env).filter(k => !routing.includes(k));
+        preview.textContent = rt('✓ 已识别：', '✓ Recognized: ') + url.host + ' · ' + $('#route-auth').value + (extra.length ? rt(' · 额外变量：', ' · Additional env: ') + extra.join(', ') : '');
+        preview.hidden = false; $('#route-form-error').textContent = '';
+        return env;
+      } catch { if (showError) throw new Error(rt('配置未能识别，请参考示例。需要包含 ANTHROPIC_AUTH_TOKEN 或 ANTHROPIC_API_KEY。', 'Unable to parse. See the example and include ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY.')); }
+    }
+    $('#route-env').addEventListener('input', () => { clearTimeout(parseTimer); parseTimer = setTimeout(() => { try { readEnv(true); } catch (e) { $('#route-form-error').textContent = $('#route-env').value.trim() ? e.message : ''; } }, 250); });
+    $('#route-use-example').onclick = () => { $('#route-env').value = JSON.stringify(envExample, null, 2); readEnv(); $('#route-env').focus(); };
+    $('#route-manual').addEventListener('toggle', () => { if ($('#route-manual').open && parsedEnv) { $('#route-env').value = ''; $('#route-preview').hidden = true; } });
+    $('#route-form').onsubmit = async e => {
+      e.preventDefault(); if (busy) return; busy = true; $('#route-submit').disabled = true; $('#route-form-error').textContent = '';
+      try {
+        clearTimeout(parseTimer);
+        if ($('#route-env').value.trim()) readEnv();
+        else if (!editing && !$('#route-manual').open) readEnv();
+        const id = editing || crypto.randomUUID();
+        if (!$('#route-url').value.trim()) throw new Error(rt('请填写服务地址', 'Enter a service URL'));
+        if (!editing && $('#route-auth').value !== 'passthrough' && !$('#route-token').value.trim()) throw new Error(rt('请填写 Token', 'Enter a token'));
+        const url = $('#route-url').value.trim();
+        let name = $('#route-name').value.trim();
+        if (!name) name = new URL(url).hostname + ' · ' + (routeData.accounts.length + 1);
+        let modelMap; try { modelMap = JSON.parse($('#route-models').value || '{}'); } catch { throw new Error(rt('高级设置中的模型映射 JSON 格式有误', 'Invalid model mapping JSON in advanced settings')); }
+        const account = { id, name, url, token: $('#route-token').value.trim(), authType: $('#route-auth').value, modelMap, ...(parsedEnv ? { env: parsedEnv } : {}), enabled: routeData.accounts.find(a => a.id === editing)?.enabled !== false };
+        const accounts = editing ? routeData.accounts.map(a => a.id === editing ? account : a) : [...routeData.accounts, account];
+        await save({ ...routeData, accounts, selected: routeData.selected || accounts.find(a => a.enabled)?.id || '' }); closeForm();
+      } catch (e) { $('#route-form-error').textContent = e.message; }
+      finally { busy = false; $('#route-submit').disabled = false; }
+    };
+    $('#route-mode').onchange = e => run(async () => { try { await save({ ...routeData, mode: e.target.value, selected: routeData.selected || routeData.accounts.find(a => a.enabled)?.id || '' }); } finally { $('#route-mode').value = routeData.mode; } });
+    $('#route-refresh').onclick = () => run(async () => { routeData = await api('GET', 'proxy'); draw(); });
+    $('#route-reset').onclick = () => run(async () => { routeData = await api('POST', 'proxy/reset', {}); draw(); });
+    $('#route-accounts').onclick = e => run(async () => {
+      const action = e.target.closest('[data-action]')?.dataset.action;
+      const id = e.target.closest('[data-account]')?.dataset.account;
+      if (!action || !id) return;
+      const a = routeData.accounts.find(a => a.id === id);
+      if (action === 'edit') return openForm(a);
+      if (action === 'use') { await save({ ...routeData, mode: 'manual', selected: id }); toast(routeData.restartRequired ? rt('已切换，请重开 Claude 加载额外环境变量', 'Switched. Restart Claude to load additional env.') : rt('已切换，下次请求生效', 'Switched for the next request')); return; }
+      let accounts = routeData.accounts.map(a => ({ ...a }));
+      if (action === 'delete') accounts = accounts.filter(a => a.id !== id);
+      if (action === 'toggle') accounts.find(a => a.id === id).enabled = !a.enabled;
+      const i = accounts.findIndex(a => a.id === id);
+      if (action === 'up' && i > 0) [accounts[i - 1], accounts[i]] = [accounts[i], accounts[i - 1]];
+      if (action === 'down' && i < accounts.length - 1) [accounts[i + 1], accounts[i]] = [accounts[i], accounts[i + 1]];
+      await save({ ...routeData, accounts, selected: accounts.some(a => a.id === routeData.selected && a.enabled) ? routeData.selected : accounts.find(a => a.enabled)?.id || '' });
+    });
+    draw();
+  } catch (e) { toast(e.message, false); }
+}
 
 // ---------- 初始化 ----------
 applyLang();

@@ -4,3 +4,6 @@ demo-data/
 .DS_Store
 panel-captures.jsonl
 panel-config.json
+
+panel-proxy.json
+*.proxy-backup-*
