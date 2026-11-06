@@ -13,6 +13,18 @@ const zlib = require('zlib');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { spawn } = require('child_process');
+const crypto = require('crypto');
+const { chooseFolder } = require('./folder-picker');
+const { createSessionStore, normalizeTitle, isManualTitle, autoTitlePatch } = require('./session-store');
+const { imageContent, imageMessage } = require('./chat-input');
+const { createInputQueue } = require('./chat-session');
+const { cliResultError } = require('./cli-result');
+const { createChatJob } = require('./chat-job');
+const { createCaptureStore } = require('./capture-store');
+const { createPermissionBridge } = require('./chat-permissions');
+const activeChats = new Map();
+let folderPickerBusy = false;
 
 const PORT = process.env.PORT || 4321;
 const PROXY_PORT = process.env.PROXY_PORT || Number(PORT) + 1;
@@ -151,6 +163,7 @@ if (CLI_CMD === '--help' || CLI_CMD === '-h') {
   process.exit(0);
 }
 const CLAUDE_DIR = process.env.CLAUDE_DIR || path.join(os.homedir(), '.claude');
+const sessionStore = createSessionStore(CLAUDE_DIR);
 
 const TYPES = {
   commands:  { dir: path.join(CLAUDE_DIR, 'commands'),  layout: 'flat', ext: '.md' },  // <name>.md
@@ -542,7 +555,125 @@ function voyageData() {
   };
 }
 
+// 读 transcript 开头，取工作目录与第一条用户提问。
+// `claude -p`（含面板里发起的对话）不写 history.jsonl，只能从 transcript 本身补齐项目与标题。
+function transcriptHead(fp) {
+  const head = { cwd: '', title: '' };
+  let text = '';
+  try {
+    const fd = fs.openSync(fp, 'r');
+    const buf = Buffer.alloc(256 * 1024);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    fs.closeSync(fd);
+    text = buf.toString('utf8', 0, n);
+  } catch { return head; }
+  for (const line of text.split('\n')) {
+    let d; try { d = JSON.parse(line); } catch { continue; }
+    if (!head.cwd && d.cwd) head.cwd = d.cwd;
+    if (!head.title && d.type === 'user' && !d.isMeta && d.message) {
+      const t = transcriptUserText(d.message.content);
+      if (t) head.title = t.replace(/\s+/g, ' ').slice(0, 200);
+    }
+    if (head.cwd && head.title) break;
+  }
+  return head;
+}
+// 用户消息里真正由人输入的文本（排除工具返回、命令回显等系统注入内容）
+function transcriptUserText(content) {
+  const text = typeof content === 'string' ? content
+    : Array.isArray(content) ? content.filter(b => b && b.type === 'text' && !(b.text?.startsWith('[Claude Panel 飞书发送上下文，本轮有效]\n') && b.text.endsWith('[/Claude Panel 飞书发送上下文]'))).map(b => b.text || '').join('\n') : '';
+  const t = text.trim();
+  if (/^\[Request interrupted by user(?: for tool use)?\]$/i.test(t)) return '';
+  if (!t || /^<(command-|local-command|system-reminder|bash-|task-notification)/.test(t) || t.startsWith('Caveat:')) return '';
+  return t;
+}
+const transcriptTitleCache = new Map();
+function latestTranscriptPrompt(fp) {
+  try {
+    const st = fs.statSync(fp), cached = transcriptTitleCache.get(fp);
+    if (cached?.mtime === st.mtimeMs && cached.size === st.size) return cached.value;
+    let value = { title: '', at: 0 };
+    const fd = fs.openSync(fp, 'r');
+    try {
+      for (let size = Math.min(65536, st.size); size; size = Math.min(size * 2, st.size)) {
+        const start = st.size - size, buffer = Buffer.alloc(size);
+        fs.readSync(fd, buffer, 0, size, start);
+        const lines = buffer.toString('utf8').split('\n');
+        for (let i = lines.length - 1; i >= (start ? 1 : 0); i--) {
+          let d; try { d = JSON.parse(lines[i]); } catch { continue; }
+          if (d.type !== 'user' || d.isMeta || d.isSidechain || !d.message) continue;
+          const text = transcriptUserText(d.message.content);
+          const hasImage = Array.isArray(d.message.content) && d.message.content.some(b => b.type === 'image');
+          if (text || hasImage) { value = { title: normalizeTitle(text) || '图片对话', at: Date.parse(d.timestamp) || st.mtimeMs }; break; }
+        }
+        if (value.title || size === st.size) break;
+      }
+    } finally { fs.closeSync(fd); }
+    transcriptTitleCache.set(fp, { mtime: st.mtimeMs, size: st.size, value }); return value;
+  } catch { return { title: '', at: 0 }; }
+}
+
+const sessionMessageCache = new Map();
+function pageSessionMessages(value, { before, limit = 80 } = {}) {
+  const total = value.messages.length;
+  const end = before === undefined ? total : Math.max(0, Math.min(total, Number(before) || 0));
+  const start = limit === 0 ? 0 : Math.max(0, end - limit);
+  return { ...value, messages: value.messages.slice(start, end), truncated: start > 0, historyBefore: start, messageCount: total };
+}
+// 会话对话内容，供面板里接续聊天时展示上文
+function sessionMessages(id, options = {}) {
+  const prompts = readHistory().filter(e => e.sessionId === id);
+  let project = (prompts.find(e => e.project) || {}).project || '';
+  let fp = project ? path.join(CLAUDE_DIR, 'projects', encodeProject(project), id + '.jsonl') : '';
+  if (!fp || !fs.existsSync(fp)) fp = transcriptPathFor(id);
+  if (!fp) {
+    const meta = sessionStore.read()[id];
+    return meta?.project && !meta.deleted ? { id, project: meta.project, messages: meta.initialPrompt ? [{ role: 'user', text: meta.initialPrompt }] : [], truncated: false } : null;
+  }
+  if (!project) project = transcriptHead(fp).cwd;
+  const stat = fs.statSync(fp), revision = `${stat.mtimeMs}:${stat.size}`;
+  const cached = sessionMessageCache.get(fp);
+  if (cached?.revision === revision) return pageSessionMessages(cached.value, options);
+  const messages = [];
+  let lines = [];
+  try { lines = fs.readFileSync(fp, 'utf8').split('\n'); } catch { return null; }
+  const toolsById = new Map();
+  for (const line of lines) {
+    let d; try { d = JSON.parse(line); } catch { continue; }
+    if (d.isSidechain || d.isMeta || !d.message) continue;
+    if (d.type === 'user') {
+      for (const block of Array.isArray(d.message.content) ? d.message.content : []) {
+        const tool = block.type === 'tool_result' && toolsById.get(block.tool_use_id);
+        if (tool) { tool.output = block.content; tool.state = block.is_error ? 'error' : 'done'; }
+      }
+      const t = transcriptUserText(d.message.content);
+      const images = (Array.isArray(d.message.content) ? d.message.content : []).filter(b => b?.type === 'image' && b.source?.type === 'base64' && ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(b.source.media_type)).map(b => ({ mimeType: b.source.media_type, data: b.source.data }));
+      if (t || images.length) messages.push({ role: 'user', text: t, images });
+    } else if (d.type === 'assistant' && Array.isArray(d.message.content)) {
+      let add = ''; const tools = [];
+      for (const b of d.message.content) {
+        if (b.type === 'text' && b.text) add += (add ? '\n\n' : '') + b.text;
+        else if (b.type === 'tool_use') {
+          if (toolsById.has(b.id)) continue;
+          const tool = { id: b.id, name: b.name, input: b.input, state: 'interrupted' };
+          tools.push(tool); toolsById.set(b.id, tool);
+        }
+      }
+      if (!add && !tools.length) continue;
+      const prev = messages[messages.length - 1];
+      if (prev && prev.role === 'assistant') { if (add) prev.text = prev.text + '\n\n' + add; prev.tools.push(...tools); }
+      else messages.push({ role: 'assistant', text: add, tools });
+    }
+  }
+  const value = { id, project, messages };
+  sessionMessageCache.delete(fp);
+  sessionMessageCache.set(fp, { revision, value });
+  while (sessionMessageCache.size > 2) sessionMessageCache.delete(sessionMessageCache.keys().next().value);
+  return pageSessionMessages(value, options);
+}
+
 function listSessions() {
+  const sessionMetadata = sessionStore.read();
   // 只列磁盘上仍有 transcript 的会话——这些才能查看详情/回放/关联抓包。
   // Claude Code 约 30 天清理 transcript，但 history.jsonl 会长期保留，
   // 若按 history 列会出现大量点开就 404 的“幽灵会话”。
@@ -553,22 +684,41 @@ function listSessions() {
     if (!e.sessionId || !idToFile.has(e.sessionId)) continue;
     let s = map.get(e.sessionId);
     if (!s) {
-      s = { id: e.sessionId, title: e.display || '', project: e.project || '', count: 0, first: e.timestamp || 0, last: e.timestamp || 0 };
+      s = { id: e.sessionId, title: e.display || '', firstTitle: e.display || '', project: e.project || '', count: 0, first: e.timestamp || 0, last: e.timestamp || 0, promptAt: e.timestamp || 0 };
       map.set(e.sessionId, s);
     }
     s.count++;
     const ts = e.timestamp || 0;
-    if (ts >= s.last) s.last = ts;
-    if (ts < s.first) { s.first = ts; s.title = e.display || s.title; }
+    if (ts >= s.last) { s.last = ts; s.title = e.display || s.title; s.promptAt = ts; }
+    if (ts < s.first) { s.first = ts; s.firstTitle = e.display || s.firstTitle; }
   }
   // transcript 存在但 history 没记标题的，用文件时间兜底
   for (const [id, fp] of idToFile) {
-    if (map.has(id)) continue;
     let mt = 0;
     try { mt = fs.statSync(fp).mtimeMs; } catch {}
-    map.set(id, { id, title: id.slice(0, 8), project: '', count: 0, first: mt, last: mt });
+    // CLI history can lag behind continued sessions and does not record -p
+    // requests. Transcript activity must advance existing sessions as well.
+    const latest = latestTranscriptPrompt(fp);
+    if (map.has(id)) {
+      const session = map.get(id); session.last = Math.max(session.last, mt);
+      if (latest.title && latest.at >= (session.promptAt || 0)) { session.title = latest.title; session.promptAt = latest.at; }
+      continue;
+    }
+    const head = transcriptHead(fp);
+    map.set(id, { id, title: latest.title || head.title || id.slice(0, 8), firstTitle: head.title, promptAt: latest.at, project: head.cwd, count: 0, first: mt, last: mt });
   }
-  return [...map.values()].sort((a, b) => b.last - a.last);
+  // A panel session exists as soon as its first input is accepted, even while
+  // the CLI is still starting and has not created its transcript yet.
+  for (const [id, meta] of Object.entries(sessionMetadata)) {
+    if (!map.has(id) && meta.project && meta.createdAt) map.set(id, { id, title: meta.title || '新对话', project: meta.project, count: 0, first: meta.createdAt, last: meta.lastAt || meta.createdAt });
+  }
+  return [...map.values()].filter(s => !sessionMetadata[s.id]?.deleted).map(s => {
+    const meta = sessionMetadata[s.id] || {}, manual = isManualTitle(meta, s.firstTitle);
+    const running = activeChats.get(s.id);
+    const pendingInput = running && !running.job.closed && (running.queue.currentId || running.queue.pendingCount);
+    const automatic = meta.autoTitle && (pendingInput || meta.autoTitleAt >= (s.promptAt || 0)) ? meta.autoTitle : s.promptAt ? s.title : meta.title || s.title;
+    return { ...s, title: manual ? meta.title : automatic || meta.title || s.id, titleSource: manual ? 'manual' : 'auto', last: Math.max(s.last, meta.lastAt || 0) };
+  }).sort((a, b) => b.last - a.last);
 }
 
 // 按 session id 找 transcript 文件路径（history 无记录时兜底）
@@ -587,8 +737,10 @@ function sessionDetail(id, lang) {
   if (!transcript || !fs.existsSync(transcript)) transcript = transcriptPathFor(id); // 兜底
   if (!prompts.length && !transcript) return null; // 既无历史也无记录，才真不存在
   const hasTranscript = transcript && fs.existsSync(transcript);
+  const head = hasTranscript && (!project || !prompts.length) ? transcriptHead(transcript) : {};
+  if (!project) project = head.cwd || '';
   const fmtTime = ts => ts ? new Date(ts).toISOString().replace('T', ' ').slice(0, 16) : '?';
-  const title = (prompts[0] && prompts[0].display) || id;
+  const title = sessionStore.read()[id]?.title || (prompts[0] && prompts[0].display) || head.title || id;
   const first = prompts[0], last = prompts[prompts.length - 1];
   let md = `# ${title}\n\n`;
   md += `| ${T(lang, 'tblField')} | ${T(lang, 'tblValue')} |\n|---|---|\n`;
@@ -605,7 +757,7 @@ function sessionDetail(id, lang) {
       md += `- **${fmtTime(p.timestamp)}** ${text}\n`;
     }
   }
-  return { name: title.slice(0, 60), path: hasTranscript ? transcript : T(lang, 'sesNoTranscript'), meta: {}, content: md, origin: 'user', session: true, hasTranscript };
+  return { name: title.slice(0, 60), path: hasTranscript ? transcript : T(lang, 'sesNoTranscript'), meta: {}, content: md, origin: 'user', session: true, hasTranscript, project };
 }
 
 // 用量统计：与 ccusage 同源 —— 直接扫描 ~/.claude/projects/**/*.jsonl 的 assistant 消息 usage，
@@ -888,7 +1040,7 @@ function sessionReplay(id) {
       const text = typeof c === 'string' ? c
         : Array.isArray(c) ? c.map(x => (x && x.type === 'text') ? x.text : '').join('\n')
         : JSON.stringify(c || '');
-      toolResults.set(b.tool_use_id, (b.is_error ? '⚠ ' : '') + text.slice(0, 20000));
+      toolResults.set(b.tool_use_id, (b.is_error ? '⚠ ' : '') + text);
     }
   }
   // 第二遍：构建对话轮次（含思考过程、工具输入/返回、每轮耗时）
@@ -912,19 +1064,19 @@ function sessionReplay(id) {
     if (isU) {
       const text = extractText(m.content);
       if (!text.trim()) continue; // 纯 tool_result 消息已在第一遍消费
-      turns.push({ role: 'user', ts: d.timestamp || '', text: text.slice(0, 4000) });
+      turns.push({ role: 'user', ts: d.timestamp || '', text: text });
     } else {
       const text = extractText(m.content);
       const content = Array.isArray(m.content) ? m.content : [];
       const thinking = content.filter(b => b && b.type === 'thinking' && b.thinking)
-        .map(b => b.thinking).join('\n\n').slice(0, 4000);
+        .map(b => b.thinking).join('\n\n');
       const tools = content.filter(b => b && b.type === 'tool_use').map(b => ({
         name: b.name,
-        input: JSON.stringify(b.input || {}, null, 2).slice(0, 20000), // 缩进美化，完整参数
+        input: JSON.stringify(b.input || {}, null, 2), // 缩进美化，完整参数
         result: toolResults.get(b.id) || '',
       }));
       if (!text.trim() && !tools.length && !thinking) continue;
-      const turn = { role: 'assistant', ts: d.timestamp || '', text: text.slice(0, 6000), thinking, tools, model: m.model || '', msgId: m.id || '' };
+      const turn = { role: 'assistant', ts: d.timestamp || '', text: text, thinking, tools, model: m.model || '', msgId: m.id || '' };
       if (m.id) {
         const prev = byMsgId.get(m.id);
         if (prev) {
@@ -946,20 +1098,20 @@ function sessionReplay(id) {
   for (const turn of turns) {
     if (turn.role !== 'assistant' || !turn.msgId) continue;
     msgIds.add(turn.msgId);
-    const cap = _captureIndex.get(turn.msgId);
+    const cap = captureStore.getByMessageId(turn.msgId);
     if (!cap) continue;
-    if (!systemPrompt && cap.sysHash) systemPrompt = _systemPool.get(cap.sysHash) || '';
-    if (!toolDefs.length && cap.toolsHash) toolDefs = _toolsPool.get(cap.toolsHash) || [];
+    if (!systemPrompt) systemPrompt = cap.system || '';
+    if (!toolDefs.length) toolDefs = cap.tools || [];
     if (!clientVersion && cap.clientVersion) clientVersion = cap.clientVersion;
     if (!userAgent && cap.userAgent) userAgent = cap.userAgent;
     if (cap.thinking && !turn.thinking) { turn.thinking = cap.thinking; turn.thinkingLive = true; }
   }
   // 每个抓包（一次 API 往返）按响应 message.id 建索引
   const roundByMsg = new Map();
-  for (const r of _inspect) {
+  for (const r of captureStore.list()) {
     if (r.respMsgId && msgIds.has(r.respMsgId)) {
       roundByMsg.set(r.respMsgId, { id: r.id, model: shortModel(r.model || '?'), ts: r.ts,
-        durationMs: r.durationMs, messagesCount: r.messagesCount, hasThinking: !!r.thinking, toolCount: (r.tools || []).length });
+        durationMs: r.durationMs, messagesCount: r.messagesCount, hasThinking: r.hasThinking, toolCount: r.toolCount });
     }
   }
   // 把每轮归到它所属的用户提问下：一条 query 后、下一条 query 前的所有 assistant 轮次都属于它
@@ -971,8 +1123,8 @@ function sessionReplay(id) {
       if (rd) { curUser.rounds.push(rd); totalRounds++; }
     }
   }
-  const truncated = turns.length > 400;
-  return { id, project, turns: turns.slice(0, 400), truncated, systemPrompt, toolDefs, clientVersion, userAgent, captured: !!systemPrompt, proxyInstalled: isProxyHookInstalled(), totalRounds };
+  const truncated = false;
+  return { id, project, turns, truncated, systemPrompt, toolDefs, clientVersion, userAgent, captured: !!systemPrompt, proxyInstalled: isProxyHookInstalled(), totalRounds };
 }
 
 // ---------- Live 快照 / 面板配置（预算） ----------
@@ -1292,10 +1444,10 @@ function sendJSON(res, code, obj) {
   res.end(data);
 }
 
-function readBody(req) {
+function readBody(req, limit = 5 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', c => { data += c; if (data.length > 5 * 1024 * 1024) req.destroy(); });
+    req.on('data', c => { data += c; if (data.length > limit) { reject(new Error('请求内容过大')); req.destroy(); } });
     req.on('end', () => resolve(data));
     req.on('error', reject);
   });
@@ -1304,58 +1456,32 @@ function readBody(req) {
 // ---------- Inspector：本地反向代理抓包 ----------
 // 用法：ANTHROPIC_BASE_URL=http://localhost:<PROXY_PORT> claude
 // 面板即可看到每个请求的完整 payload（系统提示词、工具定义、消息、流式响应含 thinking）
-const INSPECT_MAX = 200;              // 内存中用于列表展示的最近抓包数
 const CAPTURES_FILE = path.join(CLAUDE_DIR, 'panel-captures.jsonl');
-const _inspect = []; // 环形缓冲，最新在前（用于抓包列表）
-let _inspectSeq = 0;
-let _capturesAppended = 0;
-
-// 关联索引：响应 message.id → 折叠进回放所需字段。
-// 独立于展示用的 200 条缓冲，覆盖磁盘上全部抓包，保证老会话也能关联到。
-const _captureIndex = new Map();   // respMsgId -> { sysHash, toolsHash, thinking, clientVersion, userAgent }
-const _systemPool = new Map();     // hash -> system 文本（去重，避免每条都存一份大提示词）
-const _toolsPool = new Map();      // hash -> 工具定义数组（去重，同会话各轮工具相同）
-function hashStr(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return String(h); }
-function indexCapture(rec) {
-  if (!rec || !rec.respMsgId) return;
-  let sysHash = '';
-  if (rec.system) { sysHash = hashStr(rec.system); if (!_systemPool.has(sysHash)) _systemPool.set(sysHash, rec.system); }
-  let toolsHash = '';
-  if (Array.isArray(rec.tools) && rec.tools.length) {
-    const key = JSON.stringify(rec.tools);
-    toolsHash = hashStr(key);
-    if (!_toolsPool.has(toolsHash)) _toolsPool.set(toolsHash, rec.tools);
+const captureStore = createCaptureStore(CAPTURES_FILE);
+function loadCaptures() { captureStore.load(); }
+// Recover legacy captures only through exact response IDs; copied history stays ambiguous.
+function linkCaptureSessions() {
+  const wanted = new Set(captureStore.list().filter(r => r.sessionSource !== 'metadata' && r.respMsgId).map(r => r.respMsgId));
+  if (!wanted.size) return;
+  const owners = new Map();
+  for (const file of transcriptFiles().sessionFiles) {
+    const sessionId = path.basename(file, '.jsonl').toLowerCase();
+    for (const record of parsedFor(file)?.records || []) {
+      const id = record.key.split('|')[0];
+      if (!wanted.has(id)) continue;
+      if (!owners.has(id)) owners.set(id, sessionId);
+      else if (owners.get(id) !== sessionId) owners.set(id, '');
+    }
   }
-  _captureIndex.set(rec.respMsgId, { sysHash, toolsHash, thinking: rec.thinking || '', clientVersion: rec.clientVersion || '', userAgent: rec.userAgent || '' });
+  captureStore.linkSessions(owners);
 }
 
-// 启动时从磁盘恢复抓包记录（避免重启后丢失）
-function loadCaptures() {
-  try {
-    const lines = fs.readFileSync(CAPTURES_FILE, 'utf8').split('\n').filter(Boolean);
-    // 全量建关联索引；仅最近 INSPECT_MAX 条进展示缓冲
-    for (const line of lines) {
-      try { indexCapture(JSON.parse(line)); } catch {}
-    }
-    for (const line of lines.slice(-INSPECT_MAX)) {
-      try { const r = JSON.parse(line); _inspect.unshift(r); if (r.id > _inspectSeq) _inspectSeq = r.id; } catch {}
-    }
-    _capturesAppended = lines.length;
-  } catch {}
+function captureNavigationFor(id) {
+  const navigation = captureStore.navigation(id);
+  const session = navigation.sessionId ? listSessions().find(item => item.id === navigation.sessionId) : null;
+  return { ...navigation, sessionTitle: session?.title || '' };
 }
-
-function persistCapture(rec) {
-  try {
-    fs.appendFileSync(CAPTURES_FILE, JSON.stringify(rec) + '\n');
-    _capturesAppended++;
-    // 文件太大时压实为最近 INSPECT_MAX 条
-    if (_capturesAppended > INSPECT_MAX * 3) {
-      const keep = _inspect.slice(0, INSPECT_MAX).reverse().map(r => JSON.stringify(r)).join('\n');
-      fs.writeFileSync(CAPTURES_FILE, keep + '\n');
-      _capturesAppended = _inspect.length;
-    }
-  } catch {}
-}
+function persistCapture(rec) { captureStore.append(rec); }
 
 function sseExtract(raw) {
   // 从流式响应里抽取：输出文本、thinking、usage、响应消息 id（用于和 transcript 关联）
@@ -1395,38 +1521,42 @@ function decodeBody(buf, encoding) {
   return buf;
 }
 
-// 把一条请求消息压成可读结构：区分文本 / 工具调用 / 工具返回 / 图片
+// 生成不截断的可读结构；完整内容块另保存在 requestBody 中
 function summarizeMessage(m) {
   const parts = [];
   const c = m.content;
-  if (typeof c === 'string') parts.push({ kind: 'text', text: c.slice(0, 8000) });
+  if (typeof c === 'string') parts.push({ kind: 'text', text: c });
   else if (Array.isArray(c)) {
     for (const b of c) {
       if (!b || typeof b !== 'object') continue;
-      if (b.type === 'text') parts.push({ kind: 'text', text: (b.text || '').slice(0, 8000) });
-      else if (b.type === 'tool_use') parts.push({ kind: 'tool_use', name: b.name, input: JSON.stringify(b.input || {}, null, 2).slice(0, 6000) });
+      if (b.type === 'text') parts.push({ kind: 'text', text: (b.text || '') });
+      else if (b.type === 'tool_use') parts.push({ kind: 'tool_use', name: b.name, input: JSON.stringify(b.input || {}, null, 2) });
       else if (b.type === 'tool_result') {
         const rc = b.content;
         const text = typeof rc === 'string' ? rc : Array.isArray(rc) ? rc.map(x => (x && x.type === 'text') ? x.text : (x && x.type === 'image' ? '[image]' : '')).join('\n') : JSON.stringify(rc || '');
-        parts.push({ kind: 'tool_result', text: (b.is_error ? '⚠ ' : '') + text.slice(0, 8000) });
+        parts.push({ kind: 'tool_result', text: (b.is_error ? '⚠ ' : '') + text });
       } else if (b.type === 'image') parts.push({ kind: 'image', text: '[image]' });
     }
   }
   return { role: m.role, parts };
 }
 
-function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream, reqHeaders, resEncoding, upstreamId, upstreamName) {
+function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream, reqHeaders, resEncoding, upstreamId, upstreamName, requestInfo = {}) {
   resBody = decodeBody(resBody, resEncoding);
   const ua = (reqHeaders && (reqHeaders['user-agent'] || reqHeaders['User-Agent'])) || '';
   let rec = {
     upstreamId: upstreamId || '', upstreamName: upstreamName || '',
-    id: ++_inspectSeq, ts: new Date().toISOString(), path: reqPath, status, durationMs,
+    id: requestInfo.id ?? captureStore.nextId(), ts: new Date().toISOString(), path: reqPath, status, durationMs,
+    ...(requestInfo.id != null ? { requestOrder: requestInfo.requestOrder ?? requestInfo.id, startedAt: requestInfo.startedAt } : {}),
+    sessionId: requestInfo.sessionId || '', method: requestInfo.method || 'POST', routing: requestInfo.routing || null, incomplete: !!requestInfo.incomplete,
     model: '', system: '', tools: [], messagesCount: 0, lastUser: '', respMsgId: '',
-    userAgent: ua.slice(0, 300), clientVersion: parseClientVersion(ua),
+    userAgent: ua, clientVersion: parseClientVersion(ua),
     anthropicVersion: (reqHeaders && reqHeaders['anthropic-version']) || '',
-    betas: (reqHeaders && (reqHeaders['anthropic-beta'] || '')).slice(0, 300),
+    betas: (reqHeaders && (reqHeaders['anthropic-beta'] || '')),
     outText: '', thinking: '', usage: null,
     requestBytes: reqBody.length, responseBytes: resBody.length,
+    // 原始正文保留完整 JSON / SSE，包括图片、工具 ID、schema 及未知内容块。
+    requestBody: reqBody.toString('utf8'), responseBody: resBody.toString('utf8'),
   };
   try {
     const b = JSON.parse(reqBody.toString('utf8'));
@@ -1436,39 +1566,36 @@ function recordExchange(reqPath, status, durationMs, reqBody, resBody, isStream,
     rec.system = typeof b.system === 'string' ? b.system
       : Array.isArray(b.system) ? b.system.map(s => s.text || '').join('\n\n') : '';
     rec.tools = Array.isArray(b.tools)
-      ? b.tools.map(t => ({ name: t.name, description: (t.description || '').slice(0, 30000) })).filter(t => t.name)
+      ? b.tools
       : [];
     const lastU = (b.messages || []).filter(m => m.role === 'user').pop();
-    if (lastU) rec.lastUser = extractText(lastU.content).slice(0, 500);
+    if (lastU) rec.lastUser = extractText(lastU.content);
     // 完整上下文：这一轮真正发给大模型的全部消息（文本 + 工具调用 + 工具返回），供仔细分析
-    rec.messages = Array.isArray(b.messages) ? b.messages.slice(-120).map(summarizeMessage) : [];
+    rec.messages = Array.isArray(b.messages) ? b.messages.map(summarizeMessage) : [];
   } catch {}
   try {
     const rtext = resBody.toString('utf8');
     if (isStream) {
       const s = sseExtract(rtext);
-      rec.outText = s.text.slice(0, 8000);
-      rec.thinking = s.thinking.slice(0, 8000);
+      rec.outText = s.text;
+      rec.thinking = s.thinking;
       rec.usage = s.usage;
       rec.respMsgId = s.msgId;
       if (!rec.model) rec.model = s.model;
     } else {
       const r = JSON.parse(rtext);
-      rec.outText = extractText(r.content).slice(0, 8000);
+      rec.outText = extractText(r.content);
       rec.usage = r.usage || null;
       rec.respMsgId = r.id || '';
       if (!rec.model) rec.model = r.model || '';
     }
   } catch {}
-  rec.system = rec.system.slice(0, 200000);
-  _inspect.unshift(rec);
-  if (_inspect.length > INSPECT_MAX) _inspect.pop();
-  indexCapture(rec);
-  persistCapture(rec);
+  try { persistCapture(rec); } catch (e) { console.error('抓包保存失败：', e.message); }
 }
 
 const accountRouter = require('./proxy-router').createRouter({
   dir: CLAUDE_DIR, port: PROXY_PORT, record: recordExchange,
+  reserveCapture: () => ({ id: captureStore.nextId(), startedAt: new Date().toISOString() }),
 });
 const proxyServer = http.createServer(accountRouter.handle);
 loadCaptures();
@@ -1477,6 +1604,41 @@ proxyServer.on('error', e => {
   console.warn(`⚠ Inspector 代理未能在 ${PROXY_PORT} 启动（${e.code || e.message}）；面板其余功能正常。可设 PROXY_PORT=其它端口。`);
 });
 proxyServer.listen(PROXY_PORT, '127.0.0.1');
+
+const macRuntime = require('./mac-runtime').createMacRuntime({ dir: CLAUDE_DIR, serverPath: path.join(__dirname, 'server.js'), port: PORT, proxyPort: PROXY_PORT });
+const gatewayRequest = async (route, body) => {
+  const response = await fetch(`http://127.0.0.1:${PORT}/api/${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(30000) });
+  if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(error.error || response.statusText); }
+  await response.body?.cancel();
+};
+const feishuGateway = require('./feishu-gateway').createFeishuGateway({
+  dir: CLAUDE_DIR, runtime: macRuntime, replyURL: `http://127.0.0.1:${PORT}/api/feishu/reply`,
+  panel: {
+    sessions: listSessions,
+    projects: knownProjects,
+    running: id => { const run = activeChats.get(id); return !!(run && !run.job.closed && (run.queue.currentId || run.queue.pendingCount)) || !!accountRouter.sessions().items.find(item => item.id === id)?.running; },
+    submit: async input => {
+      const running = activeChats.get(input.sessionId);
+      if ((!running || running.job.closed) && accountRouter.sessions().items.some(item => item.id === input.sessionId && item.running)) throw new Error('此会话正在外部 CLI 中运行，请等本轮结束后续接；可先用 /history 查看记录');
+      await gatewayRequest(running && !running.job.closed ? `chat/${encodeURIComponent(input.sessionId)}/input` : 'chat', input);
+    },
+    watch: (id, listener) => { const run = activeChats.get(id); if (!run) throw new Error('任务未启动或已结束'); return run.job.listen(listener); },
+    permission: (id, requestId, behavior) => gatewayRequest(`chat/${encodeURIComponent(id)}/permission`, { id: requestId, behavior }),
+    pendingPermissions: id => {
+      const pending = new Map();
+      for (const { event, data } of activeChats.get(id)?.job.events || []) {
+        if (event === 'permission') pending.set(data.id, data);
+        if (event === 'permission_resolved') pending.delete(data.id);
+      }
+      return [...pending.values()];
+    },
+    history: id => sessionMessages(id)?.messages || [],
+    rename: (id, title) => { if (!listSessions().some(item => item.id === id)) throw new Error('会话不存在'); if (!title.trim() || title.trim().length > 80) throw new Error('名称需为 1–80 个字符'); sessionStore.update(id, { title: title.trim(), titleSource: 'manual' }); },
+    stop: async id => { const run = activeChats.get(id); if (!run || run.job.closed) throw new Error('当前没有可停止的 Panel 任务；外部 CLI 进程请在其原入口停止'); await gatewayRequest(`chat/${encodeURIComponent(id)}/stop`, {}); },
+  },
+});
+
+const larkSetup = require('./lark-setup').createLarkSetup({ dir: CLAUDE_DIR, configure: input => feishuGateway.configure(input) });
 
 // ---------- server ----------
 const server = http.createServer(async (req, res) => {
@@ -1490,6 +1652,10 @@ const server = http.createServer(async (req, res) => {
   if (scope && !knownProjects().includes(scope)) scope = '';
 
   try {
+    if (url.pathname === '/feishu-ui.js' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' });
+      return res.end(fs.readFileSync(path.join(__dirname, 'feishu-ui.js')));
+    }
     if (url.pathname === '/panel.css' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8', 'Cache-Control': 'no-cache' });
       return res.end(fs.readFileSync(path.join(__dirname, 'panel.css')));
@@ -1503,6 +1669,278 @@ const server = http.createServer(async (req, res) => {
 
     const type = parts[1];
 
+    if (type === 'feishu') {
+      const hosts = [`localhost:${PORT}`, `127.0.0.1:${PORT}`], origin = req.headers.origin;
+      if (!hosts.includes(req.headers.host) || origin && !hosts.some(host => origin === `http://${host}`) || req.headers['sec-fetch-site'] === 'cross-site') return sendJSON(res, 403, { error: '仅允许本机页面配置飞书网关' });
+      res.setHeader('Cache-Control', 'no-store');
+      if (req.method === 'GET' && parts[2] === 'messages') return sendJSON(res, 200, await feishuGateway.messages({ before: url.searchParams.has('before') ? url.searchParams.get('before') : undefined, userId: url.searchParams.get('userId'), chatId: url.searchParams.get('chatId') }));
+      if (req.method === 'GET') return sendJSON(res, 200, { ...feishuGateway.status(), cliSetup: larkSetup.status() });
+      if (!String(req.headers['content-type'] || '').startsWith('application/json')) return sendJSON(res, 415, { error: '需要 application/json' });
+      if (req.method === 'POST' && parts.length === 3 && parts[2] === 'reply') {
+        try { return sendJSON(res, 200, await feishuGateway.sendReply(JSON.parse(await readBody(req)))); }
+        catch (e) { return sendJSON(res, 400, { error: e.message }); }
+      }
+      if (req.method === 'POST' && parts.length === 3 && parts[2] === 'secret') return sendJSON(res, 200, { appSecret: feishuGateway.revealSecret() });
+      if (req.method === 'POST' && parts[2] === 'setup') {
+        const input = JSON.parse(await readBody(req) || '{}');
+        if (input.cancel) { larkSetup.cancel(); return sendJSON(res, 200, larkSetup.status()); }
+        if (input.repairCallbacks) return sendJSON(res, 202, await larkSetup.repairCallbacks());
+        if (input.recover) return sendJSON(res, 200, await larkSetup.recover());
+        return sendJSON(res, 202, await larkSetup.start(input.domain));
+      }
+      if (req.method === 'POST' && parts[2] === 'pairing') {
+        if (feishuGateway.status().phase !== 'connected') return sendJSON(res, 409, { error: '请先连接机器人，再生成配对命令' });
+        return sendJSON(res, 200, feishuGateway.newPairing());
+      }
+      if (req.method === 'POST' && parts[2] === 'connect') { await feishuGateway.start(); return sendJSON(res, 200, feishuGateway.status()); }
+      if (req.method === 'PUT' && parts.length === 2) {
+        const input = JSON.parse(await readBody(req));
+        const result = await feishuGateway.configure(input);
+        if (typeof input.autoStart === 'boolean') macRuntime.setAutoStart(input.autoStart);
+        return sendJSON(res, 200, { ...result, runtime: macRuntime.status() });
+      }
+      return sendJSON(res, 405, { error: 'method not allowed' });
+    }
+
+    if (type === 'choose-folder' && req.method === 'POST') {
+      const allowedHosts = [`localhost:${PORT}`, `127.0.0.1:${PORT}`];
+      const origin = req.headers.origin;
+      if (!allowedHosts.includes(req.headers.host) || (origin && !allowedHosts.some(h => origin === `http://${h}`)) || req.headers['sec-fetch-site'] === 'cross-site') {
+        return sendJSON(res, 403, { error: '仅允许本机页面选择文件夹' });
+      }
+      if (folderPickerBusy) return sendJSON(res, 409, { error: '文件夹选择器已打开' });
+      folderPickerBusy = true;
+      try {
+        const selected = await chooseFolder();
+        const folder = selected ? fs.realpathSync(selected) : null;
+        if (folder && !fs.statSync(folder).isDirectory()) return sendJSON(res, 400, { error: '请选择文件夹' });
+        return sendJSON(res, 200, { path: folder });
+      } finally { folderPickerBusy = false; }
+    }
+
+    // Chat is a local Claude Code CLI session, streamed back to the panel.
+    if (type === 'chat' && ['POST', 'GET'].includes(req.method)) {
+      const allowedHosts = [`localhost:${PORT}`, `127.0.0.1:${PORT}`];
+      const origin = req.headers.origin;
+      if (!allowedHosts.includes(req.headers.host) || (origin && !allowedHosts.some(h => origin === `http://${h}`)) || req.headers['sec-fetch-site'] === 'cross-site') {
+        return sendJSON(res, 403, { error: '仅允许本机页面启动 Claude Code 对话' });
+      }
+      if (req.method === 'GET' && parts.length === 3 && parts[2] === 'status') {
+        return sendJSON(res, 200, { running: [...activeChats.values()].filter(run => !run.job.closed && (run.queue.currentId || run.queue.pendingCount)).map(run => run.id) });
+      }
+      if (req.method === 'GET' && parts.length === 4 && parts[3] === 'events') {
+        const running = activeChats.get(decodeURIComponent(parts[2]));
+        if (!running) return sendJSON(res, 404, { error: '此任务已结束，请重新打开会话查看结果' });
+        return running.job.subscribe(res);
+      }
+      if (req.method === 'POST' && parts.length === 4 && parts[3] === 'permission') {
+        const running = activeChats.get(decodeURIComponent(parts[2]));
+        if (!running || running.job.closed) return sendJSON(res, 409, { error: '会话连接已结束' });
+        try {
+          const decision = JSON.parse(await readBody(req));
+          running.permissions.respond(decision.id, decision.behavior);
+          return sendJSON(res, 200, { ok: true });
+        } catch (e) { return sendJSON(res, 400, { error: e.message }); }
+      }
+      if (req.method === 'POST' && parts.length === 4 && parts[3] === 'stop') {
+        req.resume();
+        const running = activeChats.get(decodeURIComponent(parts[2]));
+        if (running && !running.job.closed) {
+          running.stopped = true; running.queue.stop();
+          running.job.publish('stopped', {}); running.child.kill('SIGTERM');
+        }
+        return sendJSON(res, 200, { ok: true });
+      }
+      if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method not allowed' });
+      let input;
+      try { input = JSON.parse(await readBody(req, 30 * 1024 * 1024)); } catch { return sendJSON(res, 400, { error: 'JSON 格式无效或请求过大' }); }
+      const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : '';
+      const gatewayContext = typeof input.gatewayContext === 'string' ? input.gatewayContext : '';
+      if (gatewayContext.length > 12000) return sendJSON(res, 400, { error: '发送上下文过长' });
+      let images;
+      try { images = imageContent(input.images); } catch (e) { return sendJSON(res, 400, { error: e.message }); }
+      if ((!prompt && !images.length) || prompt.length > 20000) return sendJSON(res, 400, { error: '请输入不超过 20000 字的内容，或附带图片' });
+      let cwd;
+      try { cwd = fs.realpathSync(typeof input.cwd === 'string' && input.cwd.trim() ? input.cwd.trim() : process.cwd()); }
+      catch { return sendJSON(res, 400, { error: '工作目录不存在' }); }
+      if (!fs.statSync(cwd).isDirectory()) return sendJSON(res, 400, { error: '工作目录必须是文件夹' });
+      const cli = process.env.CLAUDE_CLI || 'claude';
+      if (parts.length === 4 && parts[3] === 'input') {
+        const running = activeChats.get(decodeURIComponent(parts[2]));
+        if (!running) return sendJSON(res, 409, { error: '会话连接已结束，请重新发送' });
+        const messageId = typeof input.messageId === 'string' && /^[\w-]{8,100}$/.test(input.messageId) ? input.messageId : crypto.randomUUID();
+        try {
+          running.queue.submit(messageId, imageMessage(prompt, images, gatewayContext), input.mode !== 'queue', () => running.job.publish('input', { id: messageId, prompt, images: input.images || [], mode: input.mode }));
+          const meta = sessionStore.read()[running.id] || {};
+          const fp = transcriptPathFor(running.id);
+          sessionStore.update(running.id, { ...autoTitlePatch(meta, prompt, fp ? transcriptHead(fp).title : ''), lastAt: Date.now() });
+          return sendJSON(res, 202, { ok: true, messageId });
+        } catch (e) { return sendJSON(res, 409, { error: e.message }); }
+      }
+      const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--dangerously-skip-permissions'];
+      // 新会话预先分配 ID，这样在第一条请求前就能把它固定到所选代理账号
+      const suppliedId = typeof input.sessionId === 'string' && /^[a-zA-Z0-9-]{8,100}$/.test(input.sessionId) ? input.sessionId : '';
+      const sessionId = suppliedId || crypto.randomUUID();
+      if (activeChats.has(sessionId) && !activeChats.get(sessionId).job.closed) return sendJSON(res, 409, { error: '此会话正在运行，请重新打开会话接续' });
+      const resuming = !!suppliedId && !!transcriptPathFor(sessionId);
+      const baseHistory = resuming ? sessionMessages(sessionId) : null;
+      const baseMessages = baseHistory?.messages || [];
+      const metadata = sessionStore.read()[sessionId] || {};
+      const fp = resuming ? transcriptPathFor(sessionId) : '';
+      sessionStore.update(sessionId, { ...autoTitlePatch(metadata, prompt, fp ? transcriptHead(fp).title : ''), project: cwd, initialPrompt: metadata.initialPrompt || prompt, createdAt: metadata.createdAt || Date.now(), lastAt: Date.now() });
+      args.push(resuming ? '--resume' : '--session-id', sessionId);
+      if (typeof input.accountId === 'string') {
+        try { accountRouter.setSessionRoute(sessionId, input.accountId); } catch (e) { return sendJSON(res, 400, { error: e.message }); }
+      }
+      if (typeof input.model === 'string' && /^[\w.\/:\[\]-]{1,100}$/.test(input.model.trim())) args.push('--model', input.model.trim());
+      let child;
+      // 有启用的代理账号就走账号路由（用量可按账号统计），否则沿用本机 Claude Code 自己的登录配置
+      const clientEnv = { ...(accountRouter.clientEnv() || {}), ...await accountRouter.modelEnvForSession(sessionId) };
+      // settings.json 的 env 优先于进程环境变量，用 --settings 才能确保这次对话经过面板代理
+      if (clientEnv.ANTHROPIC_BASE_URL) args.push('--settings', JSON.stringify({ env: clientEnv }));
+      try { child = spawn(cli, args, { cwd, env: { ...process.env, ...clientEnv, PWD: cwd }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }); }
+      catch (e) { return sendJSON(res, 503, { error: `无法启动 Claude Code：${e.message}` }); }
+      child.stdin.on('error', () => {});
+      const job = createChatJob({ routed: !!clientEnv.ANTHROPIC_BASE_URL, cwd, sessionId, jobId: crypto.randomUUID() });
+      job.subscribe(res);
+      child.stdout.setEncoding('utf8');
+      let stdout = '', stderr = '', sentText = false, turnStreamed = false, ended = false;
+      const streamingTools = new Map();
+      const toolAliases = new Map(), pendingTools = new Map();
+      const emit = (event, data) => { if (!ended) job.publish(event, { ...data, ...(inputQueue?.currentId ? { messageId: inputQueue.currentId } : {}) }); };
+      let idleTimer, timer;
+      const backgroundTasks = new Set();
+      const armIdleTimer = () => {
+        clearTimeout(idleTimer);
+        if (inputQueue.currentId || permissions.size || backgroundTasks.size) return;
+        idleTimer = setTimeout(() => child.stdin.end(), 3 * 60 * 1000);
+      };
+      const inputQueue = createInputQueue({ child,
+        onTurn: id => {
+          clearTimeout(idleTimer); clearTimeout(timer);
+          // 长任务默认不设时限；需要时可由启动环境显式配置。
+          const timeoutMs = Number(process.env.CCP_CHAT_TIMEOUT_MS || 0);
+          if (Number.isFinite(timeoutMs) && timeoutMs > 0) timer = setTimeout(() => {
+            emit('error', { error: `本轮已达到配置的超时时间（${Math.round(timeoutMs / 1000)} 秒）` });
+            child.kill('SIGTERM');
+          }, timeoutMs);
+          sentText = turnStreamed = false; streamingTools.clear(); toolAliases.clear(); pendingTools.clear(); emit('turn', { id });
+        },
+        onIdle: () => { clearTimeout(timer); emit('idle', {}); armIdleTimer(); },
+        onWarning: warning => emit('warning', { warning }),
+      });
+      const permissions = createPermissionBridge({ child, autoApprove: true, publish: (event, data) => {
+        if (event === 'permission') clearTimeout(idleTimer);
+        if (event === 'permission_resolved' && !inputQueue.currentId) armIdleTimer();
+        emit(event, data);
+      } });
+      const running = { id: sessionId, queue: inputQueue, job, baseMessages, baseHistory, child, permissions, stopped: false };
+      activeChats.set(sessionId, running);
+      const emitToolResult = block => {
+        const id = toolAliases.get(block.tool_use_id) || block.tool_use_id;
+        if (!pendingTools.has(id)) return;
+        pendingTools.delete(id);
+        emit('tool_result', { id, output: block.content, isError: !!block.is_error });
+      };
+      const syncToolResults = () => {
+        if (!pendingTools.size) return;
+        // Some CLI versions omit user tool_result events from stdout. The
+        // transcript is authoritative and also contains permission failures.
+        try {
+          const history = sessionMessages(sessionId, { limit: 0 });
+          for (const message of history?.messages || []) for (const tool of message.tools || []) {
+            if (tool.output !== undefined) emitToolResult({ tool_use_id: tool.id, content: tool.output, is_error: tool.state === 'error' });
+          }
+        } catch {}
+      };
+      const processLine = line => {
+        let msg; try { msg = JSON.parse(line); } catch { return; }
+        if (msg.type === 'system' && msg.subtype === 'task_started' && msg.task_id) {
+          backgroundTasks.add(msg.task_id); clearTimeout(idleTimer);
+        }
+        if (msg.type === 'system' && msg.subtype === 'task_notification' && msg.task_id) {
+          backgroundTasks.delete(msg.task_id);
+          if (!inputQueue.currentId) armIdleTimer();
+        }
+        if (permissions.handle(msg)) return;
+        if (msg.type === 'control_response') inputQueue.control(msg);
+        else if (msg.type === 'stream_event') {
+          const ev = msg.event;
+          if (ev?.type === 'message_start') { turnStreamed = false; streamingTools.clear(); }
+          if (ev?.type === 'content_block_start') {
+            const block = ev.content_block;
+            if (block?.type === 'text' && block.text) { sentText = turnStreamed = true; emit('text', { text: block.text }); }
+            if (block?.type === 'tool_use') {
+              const tool = { id: block.id, name: block.name, finalized: false };
+              streamingTools.set(ev.index, tool); pendingTools.set(block.id, tool);
+              emit('tool', { id: block.id, name: block.name, input: block.input, partial: true });
+            }
+          }
+          if (ev?.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && ev.delta.text) { sentText = turnStreamed = true; emit('text', { text: ev.delta.text }); }
+          if (ev?.type === 'content_block_delta' && ev.delta?.type === 'input_json_delta' && streamingTools.has(ev.index)) emit('tool_input', { id: streamingTools.get(ev.index).id, text: ev.delta.partial_json || '' });
+        } else if (msg.type === 'assistant' && Array.isArray(msg.message?.content)) {
+          syncToolResults();
+          for (const block of msg.message.content) {
+            if (block.type === 'text' && block.text && !turnStreamed) { sentText = true; emit('text', { text: block.text }); }
+            else if (block.type === 'tool_use') {
+              const tool = Array.from(streamingTools.values()).find(t => t.id === block.id || (!t.finalized && t.name === block.name));
+              const known = toolAliases.has(block.id);
+              const id = toolAliases.get(block.id) || tool?.id || block.id;
+              if (tool) tool.finalized = true;
+              toolAliases.set(block.id, id);
+              if (!known || pendingTools.has(id)) pendingTools.set(id, { id, name: block.name });
+              emit('tool', { id, name: block.name, input: block.input });
+            }
+          }
+          turnStreamed = false;
+        } else if (msg.type === 'user' && Array.isArray(msg.message?.content)) {
+          for (const block of msg.message.content) {
+            if (block.type === 'tool_result') emitToolResult(block);
+          }
+        } else if (msg.type === 'result') {
+          syncToolResults();
+          const error = inputQueue.interrupted ? '' : cliResultError(msg);
+          if (error) emit('error', { error });
+          else if (!sentText && msg.result && !inputQueue.interrupted) emit('text', { text: msg.result });
+          emit('done', { sessionId: msg.session_id || sessionId, cost: msg.total_cost_usd || null, turns: msg.num_turns || 0, isError: !!error, error, interrupted: inputQueue.interrupted });
+          inputQueue.result();
+        }
+      };
+      child.stdout.on('data', chunk => {
+        stdout += chunk.toString('utf8');
+        let cut; while ((cut = stdout.indexOf('\n')) >= 0) { processLine(stdout.slice(0, cut)); stdout = stdout.slice(cut + 1); }
+      });
+      child.stderr.on('data', chunk => { if (stderr.length < 8000) stderr += chunk.toString('utf8'); });
+      const toolSyncTimer = setInterval(syncToolResults, 1000);
+      const cleanup = () => {
+        permissions.clear(); inputQueue.stop(); clearTimeout(idleTimer); clearTimeout(timer);
+        const retention = setTimeout(() => { if (activeChats.get(sessionId) === running) activeChats.delete(sessionId); }, 5 * 60 * 1000); retention.unref();
+      };
+      child.on('error', e => {
+        cleanup();
+        clearTimeout(timer);
+        clearInterval(toolSyncTimer);
+        emit('error', { error: `无法启动 Claude Code（${cli}）：${e.message}。可用环境变量 CLAUDE_CLI 指定路径。` });
+        if (!ended) { ended = true; job.close(); }
+      });
+      child.on('close', (code, signal) => {
+        clearTimeout(timer);
+        clearInterval(toolSyncTimer);
+        if (stdout.trim()) processLine(stdout.trim());
+        syncToolResults();
+        if (!ended) {
+          if (!running.stopped && (code !== 0 || inputQueue.currentId)) emit('error', { error: stderr.trim().slice(-2000) || `Claude Code 提前结束，未完成回复（${signal || `状态码 ${code}`}）` });
+          ended = true; job.close();
+        }
+        cleanup();
+      });
+      const messageId = typeof input.messageId === 'string' && /^[\w-]{8,100}$/.test(input.messageId) ? input.messageId : crypto.randomUUID();
+      job.publish('input', { id: messageId, prompt, images: input.images || [] });
+      child.stdin.write(JSON.stringify({ type: 'control_request', request_id: crypto.randomUUID(), request: { subtype: 'initialize', hooks: {} } }) + '\n');
+      inputQueue.submit(messageId, imageMessage(prompt, images, gatewayContext));
+      return;
+    }
+
     // Account credentials are only available through same-origin JSON management requests.
     if (type === 'proxy') {
       const allowedHosts = [`localhost:${PORT}`, `127.0.0.1:${PORT}`];
@@ -1512,14 +1950,36 @@ const server = http.createServer(async (req, res) => {
       }
       res.setHeader('Cache-Control', 'no-store');
       if (req.method === 'GET' && parts.length === 2) return sendJSON(res, 200, accountRouter.status());
+      if (req.method === 'GET' && parts[2] === 'sessions') return sendJSON(res, 200, accountRouter.sessions());
       if (!String(req.headers['content-type'] || '').startsWith('application/json')) return sendJSON(res, 415, { error: '需要 application/json' });
       try {
         if (req.method === 'PUT' && parts.length === 2) return sendJSON(res, 200, accountRouter.save(JSON.parse(await readBody(req))));
         if (req.method === 'POST' && parts[2] === 'import') return sendJSON(res, 200, accountRouter.importSettings());
         if (req.method === 'POST' && parts[2] === 'setup') return sendJSON(res, 200, accountRouter.setup());
         if (req.method === 'POST' && parts[2] === 'reset') return sendJSON(res, 200, accountRouter.reset());
+        if (req.method === 'PUT' && parts[2] === 'sessions' && parts.length === 4) return sendJSON(res, 200, accountRouter.setSessionRoute(decodeURIComponent(parts[3]), JSON.parse(await readBody(req)).accountId || ''));
         return sendJSON(res, 405, { error: 'method not allowed' });
       } catch (e) { return sendJSON(res, 400, { error: e instanceof SyntaxError ? 'JSON 格式无效' : e.message }); }
+    }
+
+    if (type === 'account-usage' && req.method === 'GET') {
+      const byAccount = new Map();
+      for (const r of captureStore.list()) {
+        const id = r.upstreamId || 'unknown';
+        const row = byAccount.get(id) || { id, name: r.upstreamName || (id === 'unknown' ? '未标记账号' : id), requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0, costKnown: true, lastUsedAt: '' };
+        row.requests++;
+        row.inputTokens += r.usage?.input_tokens || 0;
+        row.outputTokens += r.usage?.output_tokens || 0;
+        row.cacheReadTokens += r.usage?.cache_read_input_tokens || 0;
+        row.cacheWriteTokens += r.usage?.cache_creation_input_tokens || 0;
+        if (r.model && r.usage) {
+          const value = { in: r.usage.input_tokens || 0, out: r.usage.output_tokens || 0, cr: r.usage.cache_read_input_tokens || 0, cc: r.usage.cache_creation_input_tokens || 0, c1: r.usage.cache_creation?.ephemeral_1h_input_tokens || 0 };
+          const cost = costOf(r.model, value); if (cost === null) row.costKnown = false; else row.cost += cost;
+        }
+        if (!row.lastUsedAt || r.ts > row.lastUsedAt) row.lastUsedAt = r.ts;
+        byAccount.set(id, row);
+      }
+      return sendJSON(res, 200, { accounts: [...byAccount.values()].sort((a, b) => b.requests - a.requests), limit: null, source: 'proxy-captures' });
     }
 
     // ---- 项目列表 ----
@@ -1595,28 +2055,31 @@ const server = http.createServer(async (req, res) => {
 
     // ---- Inspector 抓包 ----
     if (type === 'inspector') {
+      if (req.method === 'GET') linkCaptureSessions();
       if (req.method === 'GET' && parts.length === 2) {
+        if (url.searchParams.get('since') === String(captureStore.revision)) return sendJSON(res, 200, { unchanged: true, revision: captureStore.revision });
         return sendJSON(res, 200, {
           proxyPort: Number(PROXY_PORT),
-          items: _inspect.map(r => ({
-            key: String(r.id),
-            name: `${shortModel(r.model || '?')} · ${r.status}`,
-            description: `${r.upstreamName ? r.upstreamName + ' · ' : ''}${r.ts.slice(11, 19)}${r.clientVersion ? ' · cli ' + r.clientVersion : ''} · ${r.messagesCount} msgs · ${Math.round(r.durationMs / 1000)}s${r.thinking ? ' · 💭' : ''}`,
+          revision: captureStore.revision,
+          items: captureStore.list().map(r => ({
+            key: String(r.id), sessionId: r.sessionId, startedAt: r.startedAt, purpose: r.purpose, purposeInferred: r.purposeInferred,
+            name: `${shortModel(r.model || '?')} · ${r.status} · ${({ compaction: '压缩/摘要（推测）', title: '标题生成（推测）', count_tokens: 'Token 计数', models: '模型列表', oauth: '认证', other: '其他接口' })[r.purpose] || '模型请求'}`,
+            description: `${r.upstreamName ? r.upstreamName + ' · ' : ''}${r.ts.slice(11, 19)}${r.clientVersion ? ' · cli ' + r.clientVersion : ''} · ${r.messagesCount} msgs · ${Math.round(r.durationMs / 1000)}s${r.hasThinking ? ' · 💭' : ''}`,
             origin: 'user',
           })),
         });
       }
+      if (req.method === 'GET' && parts.length === 4 && parts[3] === 'navigation') {
+        if (!captureStore.metadata(decodeURIComponent(parts[2]))) return sendJSON(res, 404, { error: T(lang, 'errNotFound') });
+        return sendJSON(res, 200, { navigation: captureNavigationFor(decodeURIComponent(parts[2])) });
+      }
       if (req.method === 'GET' && parts.length === 3) {
-        const r = _inspect.find(x => String(x.id) === decodeURIComponent(parts[2]));
-        return r ? sendJSON(res, 200, r) : sendJSON(res, 404, { error: T(lang, 'errNotFound') });
+        const r = captureStore.get(decodeURIComponent(parts[2]));
+        if (!r) return sendJSON(res, 404, { error: T(lang, 'errNotFound') });
+        return sendJSON(res, 200, { ...r, ...captureStore.metadata(r.id), navigation: captureNavigationFor(r.id) });
       }
       if (req.method === 'DELETE' && parts.length === 2) {
-        _inspect.length = 0;
-        _captureIndex.clear();
-        _systemPool.clear();
-        _toolsPool.clear();
-        _capturesAppended = 0;
-        try { fs.writeFileSync(CAPTURES_FILE, ''); } catch {}
+        captureStore.clear();
         return sendJSON(res, 200, { ok: true });
       }
       return sendJSON(res, 405, { error: 'method not allowed' });
@@ -1640,14 +2103,44 @@ const server = http.createServer(async (req, res) => {
 
     // ---- 会话历史 ----
     if (type === 'sessions') {
+      if ((req.method === 'PATCH' || req.method === 'DELETE') && parts.length === 3) {
+        const allowedHosts = [`localhost:${PORT}`, `127.0.0.1:${PORT}`];
+        const origin = req.headers.origin;
+        if (!allowedHosts.includes(req.headers.host) || (origin && !allowedHosts.some(h => origin === `http://${h}`)) || req.headers['sec-fetch-site'] === 'cross-site') return sendJSON(res, 403, { error: '仅允许本机页面管理会话' });
+        const id = decodeURIComponent(parts[2]);
+        if (!listSessions().some(s => s.id === id)) return sendJSON(res, 404, { error: T(lang, 'errNotFound') });
+        if (req.method === 'DELETE') {
+          sessionStore.update(id, { deleted: true });
+          return sendJSON(res, 200, { ok: true });
+        }
+        let input;
+        try { input = JSON.parse(await readBody(req)); } catch { return sendJSON(res, 400, { error: 'JSON 格式无效' }); }
+        const title = typeof input.title === 'string' ? input.title.trim() : '';
+        if (!title || title.length > 80) return sendJSON(res, 400, { error: '请输入 1–80 个字符的会话名称' });
+        sessionStore.update(id, { title, titleSource: 'manual' });
+        return sendJSON(res, 200, { ok: true, title });
+      }
       if (req.method === 'GET' && parts.length === 2) {
+        res.setHeader('Cache-Control', 'no-store');
         const items = listSessions().map(s => ({
           name: (s.title || s.id).slice(0, 80),
           key: s.id,
-          description: `${path.basename(s.project || '') || '?'} · ${s.count} × · ${s.last ? new Date(s.last).toISOString().slice(0, 10) : '?'}`,
+          description: `${path.basename(s.project || '') || '?'} · ${s.count ? s.count + ' × · ' : ''}${s.last ? new Date(s.last).toISOString().slice(0, 10) : '?'}`,
           origin: 'user',
+          titleSource: s.titleSource,
         }));
         return sendJSON(res, 200, { items });
+      }
+      if (req.method === 'GET' && parts.length === 4 && parts[3] === 'messages') {
+        res.setHeader('Cache-Control', 'no-store');
+        const id = decodeURIComponent(parts[2]), running = activeChats.get(id);
+        if (running && !url.searchParams.has('before')) return sendJSON(res, 200, { ...running.baseHistory, id: running.id, project: running.job.meta.cwd, messages: running.baseMessages, liveReplay: true, jobId: running.job.meta.jobId });
+        const fp = transcriptPathFor(id);
+        let revision = '';
+        if (fp) { const st = fs.statSync(fp); revision = `${st.mtimeMs}:${st.size}`; }
+        if (revision && url.searchParams.get('since') === revision) return sendJSON(res, 200, { unchanged: true, revision });
+        const r = sessionMessages(id, { before: url.searchParams.has('before') ? url.searchParams.get('before') : undefined, limit: Math.max(1, Number(url.searchParams.get('limit')) || 80) });
+        return r ? sendJSON(res, 200, { ...r, revision }) : sendJSON(res, 404, { error: T(lang, 'errNotFound') });
       }
       if (req.method === 'GET' && parts.length === 4 && parts[3] === 'replay') {
         const r = sessionReplay(decodeURIComponent(parts[2]));
@@ -1827,4 +2320,15 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`管理目录: ${CLAUDE_DIR}`);
   console.log(`Inspector 代理: http://localhost:${PROXY_PORT}`);
   ensureProxyInstalled();
+  feishuGateway.bootstrap().catch(e => console.warn('飞书网关：' + e.message));
 });
+const stopPanel = async () => {
+  const forceExit = setTimeout(() => process.exit(0), 8000); forceExit.unref();
+  larkSetup.close();
+  macRuntime.close();
+  await feishuGateway.stop().catch(() => {});
+  for (const running of activeChats.values()) if (!running.job.closed) running.child.kill('SIGTERM');
+  process.exit(0);
+};
+process.once('SIGTERM', stopPanel);
+process.once('SIGINT', stopPanel);

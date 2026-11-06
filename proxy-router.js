@@ -4,6 +4,7 @@ const path = require('path');
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
+const { modelDefaults } = require('./model-defaults');
 const HOP = new Set(['host', 'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'content-length']);
 const ROUTED_ENV = new Set(['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL']);
 function parseEnvInput(input) {
@@ -38,11 +39,21 @@ function atomicJSON(file, data) {
     fs.renameSync(tmp, file);
   } finally { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); }
 }
-function createRouter({ dir, port, record = () => {} }) {
+// Claude Code puts the session id in metadata.user_id ("…_session_<uuid>" or a JSON string with session_id).
+function sessionIdOf(parsed) {
+  const uid = parsed?.metadata?.user_id;
+  const m = typeof uid === 'string' && uid.match(/session(?:_id)?["':\s_]*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+  return m ? m[1].toLowerCase() : '';
+}
+const SESSION_ROUTES_MAX = 500, LIVE_TTL = 30 * 60 * 1000;
+function createRouter({ dir, port, record = () => {}, reserveCapture = () => ({}) }) {
   const file = path.join(dir, 'panel-proxy.json');
   let config = { mode: 'manual', selected: '', accounts: [], localToken: crypto.randomBytes(32).toString('hex') };
   if (fs.existsSync(file)) config = { ...config, ...JSON.parse(fs.readFileSync(file, 'utf8')) };
+  if (!config.sessionRoutes || typeof config.sessionRoutes !== 'object' || Array.isArray(config.sessionRoutes)) config.sessionRoutes = {};
   const health = new Map();
+  const live = new Map(); // sessionId -> { accountId, accountName, inflight, lastAt, lastStatus, model, pinned }
+  const modelCache = new Map();
   let cursor = 0, lastUsed = '';
   const localURL = `http://127.0.0.1:${port}`;
   function connectionStatus() {
@@ -173,8 +184,9 @@ function createRouter({ dir, port, record = () => {} }) {
       res.end(JSON.stringify({ error: '模型代理不接受浏览器跨域请求' }));
       return;
     }
-    let activeRequest;
-    const cancel = () => activeRequest?.destroy();
+    const requestInfo = reserveCapture();
+    let activeRequest, cancelCapture;
+    const cancel = () => { cancelCapture?.(); activeRequest?.destroy(); };
     res.on('close', cancel);
     const chunks = [];
     let size = 0;
@@ -189,27 +201,53 @@ function createRouter({ dir, port, record = () => {} }) {
       const snapshot = config;
       const isOAuth = /^\/(?:v1|api)\/oauth\//.test(req.url);
       const enabled = snapshot.accounts.filter(a => a.enabled);
+      let sessionId = '', model = '';
+      try { const parsed = JSON.parse(body.toString()); sessionId = sessionIdOf(parsed); model = typeof parsed.model === 'string' ? parsed.model : ''; } catch {}
+      requestInfo.sessionId = sessionId;
+      requestInfo.method = req.method;
+      const pinned = sessionId && !isOAuth ? enabled.find(a => a.id === snapshot.sessionRoutes?.[sessionId]) : null;
       // With no configured accounts, retain the original Inspector passthrough.
-      let candidates = !snapshot.accounts.length || isOAuth ? [{ id: '', name: 'Anthropic', url: isOAuth && req.url.startsWith('/v1/oauth/') ? 'https://platform.claude.com' : 'https://api.anthropic.com', authType: 'passthrough', modelMap: {} }]
+      let candidates = pinned ? [pinned] : !snapshot.accounts.length || isOAuth ? [{ id: '', name: 'Anthropic', url: isOAuth && req.url.startsWith('/v1/oauth/') ? 'https://platform.claude.com' : 'https://api.anthropic.com', authType: 'passthrough', modelMap: {} }]
         : snapshot.mode === 'manual' ? enabled.filter(a => a.id === snapshot.selected)
         : enabled.filter(a => (health.get(a.id)?.cooldownUntil || 0) <= Date.now());
-      if (snapshot.mode === 'round-robin' && candidates.length && !isOAuth) {
+      if (snapshot.mode === 'round-robin' && candidates.length && !isOAuth && !pinned) {
         const offset = cursor++ % candidates.length;
         candidates = candidates.slice(offset).concat(candidates.slice(0, offset));
       }
+      // Only real turns (not count_tokens) mark a session as running.
+      if (sessionId && /\/messages(\?|$)/.test(req.url)) {
+        const entry = live.get(sessionId) || { inflight: 0 };
+        entry.inflight++; entry.lastAt = Date.now(); entry.model = model || entry.model; entry.pinned = !!pinned;
+        live.set(sessionId, entry);
+        let done = false;
+        res.on('close', () => { if (!done) { done = true; entry.inflight = Math.max(0, entry.inflight - 1); entry.lastAt = Date.now(); } });
+      }
+      let lastAttemptCaptured = false;
       const fail = (code, message) => {
         if (res.headersSent) return res.destroy();
         res.writeHead(code, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message } }));
+        const errorBody = Buffer.from(JSON.stringify({ type: 'error', error: { type: 'api_error', message } }));
+        if (!lastAttemptCaptured) { lastAttemptCaptured = true; try { record(req.url, code, Date.now() - started, body, errorBody, false, req.headers, '', '', '', { ...requestInfo, routing: { mode: snapshot.mode, reason: 'local_error', attempt: 0, requestedModel: model } }); } catch {} }
+        res.end(errorBody);
       };
       // Never send the local proxy credential to an OAuth service.
       if (isOAuth && (req.headers.authorization === 'Bearer ' + snapshot.localToken || req.headers['x-api-key'] === snapshot.localToken)) return fail(400, '本地代理凭证不能用于 OAuth，请使用 API Token 模式');
       let index = 0;
       function attempt() {
         if (res.destroyed) return;
+        lastAttemptCaptured = false;
         const account = candidates[index++];
         if (!account) return fail(503, '没有可用账号：请检查启用状态、手动选择或冷却时间');
+        const entry = sessionId && live.get(sessionId);
+        if (entry) Object.assign(entry, { accountId: account.id, accountName: account.name });
         const target = new URL(account.url);
+        const attemptInfo = { ...(index === 1 ? requestInfo : reserveCapture()), requestOrder: requestInfo.id, sessionId, method: req.method,
+          routing: { mode: snapshot.mode, reason: pinned ? 'session_pin' : !snapshot.accounts.length || isOAuth ? 'passthrough' : snapshot.mode === 'manual' ? 'manual' : index > 1 ? 'failover' : snapshot.mode, attempt: index, requestedModel: model, actualModel: model } };
+        const saveAttempt = (code, responseBody, stream = false, encoding = '', incomplete = false) => {
+          if (lastAttemptCaptured) return; lastAttemptCaptured = true;
+          try { record(req.url, code, Date.now() - started, data, responseBody, stream, req.headers, encoding, account.id, account.name, { ...attemptInfo, incomplete }); } catch {}
+        };
+        cancelCapture = () => saveAttempt(499, Buffer.from('{"error":"client disconnected before response"}'), false, '', true);
         let data = body;
         try {
           const parsed = JSON.parse(body.toString());
@@ -217,7 +255,7 @@ function createRouter({ dir, port, record = () => {} }) {
             const map = account.modelMap;
             const key = Object.keys(map).find(k => k !== '*' && parsed.model.toLowerCase().includes(k.toLowerCase()));
             const mapped = map[parsed.model] || map[key] || map['*'];
-            if (mapped) { parsed.model = mapped; data = Buffer.from(JSON.stringify(parsed)); }
+            if (mapped) { parsed.model = mapped; attemptInfo.routing.actualModel = mapped; data = Buffer.from(JSON.stringify(parsed)); }
           }
         } catch {}
         const headers = cleanHeaders(req.headers);
@@ -252,31 +290,32 @@ function createRouter({ dir, port, record = () => {} }) {
             const delay = /^\d+(\.\d+)?$/.test(retryAfter || '') ? Number(retryAfter) * 1000 : Date.parse(retryAfter) - Date.now();
             if (delay > 0) health.get(account.id).cooldownUntil = Date.now() + Math.min(delay, 86400000);
           }
-          if (retry && index < candidates.length && snapshot.mode !== 'manual' && !isOAuth) {
-            moved = true;
-            response.destroy();
-            upstream.destroy();
-            return attempt();
-          }
+          const shouldRetry = retry && index < candidates.length && snapshot.mode !== 'manual' && !isOAuth && !pinned;
+          const captured = [];
+          let finished = false;
+          const saveResponse = incomplete => { if (finished) return; finished = true; saveAttempt(code, Buffer.concat(captured), String(response.headers['content-type']).includes('event-stream'), response.headers['content-encoding'], incomplete); };
+          cancelCapture = () => saveResponse(true);
+          response.on('data', c => captured.push(c));
+          response.on('end', () => { saveResponse(false); if (shouldRetry && !res.destroyed) { moved = true; attempt(); } });
+          response.on('close', () => saveResponse(!response.complete));
+          response.on('error', () => { saveResponse(true); res.destroy(); });
+          if (shouldRetry) { response.resume(); return; }
           if (!retry) health.set(account.id, { lastStatus: code, cooldownUntil: 0, lastUsedAt: Date.now() });
           lastUsed = account.id;
+          if (sessionId) {
+            const entry = live.get(sessionId);
+            if (entry) Object.assign(entry, { accountId: account.id, accountName: account.name, lastStatus: code, lastAt: Date.now() });
+          }
           res.writeHead(code, cleanHeaders(response.headers));
-          const captured = []; let capturedSize = 0;
-          response.on('data', c => { if (capturedSize < 8e6) { captured.push(c); capturedSize += c.length; } });
-          response.on('error', () => res.destroy());
-          response.on('end', () => {
-            if (req.url.includes('/messages')) {
-              try { record(req.url, code, Date.now() - started, data, Buffer.concat(captured), String(response.headers['content-type']).includes('event-stream'), req.headers, response.headers['content-encoding'], account.id, account.name); } catch {}
-            }
-          });
           response.pipe(res);
         });
         activeRequest = upstream;
         upstream.setTimeout(120000, () => upstream.destroy(new Error('upstream timeout')));
         upstream.on('error', () => {
           if (moved || res.destroyed) return;
+          saveAttempt(502, Buffer.from(JSON.stringify({ error: '上游连接失败或超时' })));
           cool(502);
-          if (!res.headersSent && index < candidates.length && snapshot.mode !== 'manual' && !isOAuth) { moved = true; attempt(); }
+          if (!res.headersSent && index < candidates.length && snapshot.mode !== 'manual' && !isOAuth && !pinned) { moved = true; attempt(); }
           else fail(502, '上游连接失败或超时');
         });
         upstream.end(data);
@@ -284,6 +323,60 @@ function createRouter({ dir, port, record = () => {} }) {
       attempt();
     });
   }
-  return { status, save, importSettings, setup, handle, reset: () => { health.clear(); return status(); } };
+  function clientEnv() {
+    if (!config.accounts.some(a => a.enabled && a.authType !== 'passthrough')) return null;
+    return { ANTHROPIC_BASE_URL: localURL, ANTHROPIC_AUTH_TOKEN: config.localToken, ANTHROPIC_API_KEY: '' };
+  }
+  async function modelEnvForSession(sessionId) {
+    const pinned = config.sessionRoutes[sessionId];
+    const account = config.accounts.find(a => a.enabled && a.id === (pinned || config.selected)) || config.accounts.find(a => a.enabled);
+    if (!account || account.authType === 'passthrough' || account.modelMap['*']) return {};
+    const explicit = { ...(process.env || {}), ...(account.env || {}) };
+    for (const family of ['OPUS', 'SONNET', 'HAIKU']) if (account.modelMap[family.toLowerCase()]) explicit[`ANTHROPIC_DEFAULT_${family}_MODEL`] = account.modelMap[family.toLowerCase()];
+    const cacheKey = account.id + account.url + account.token;
+    let entry = modelCache.get(cacheKey);
+    if (!entry || Date.now() - entry.at > 5 * 60 * 1000) {
+      const request = (async () => {
+        try {
+          const url = account.url.replace(/\/$/, '') + (new URL(account.url).pathname.endsWith('/v1') ? '/models' : '/v1/models');
+          const headers = { 'anthropic-version': '2023-06-01' };
+          if (account.authType === 'api-key') headers['x-api-key'] = account.token; else headers.authorization = `Bearer ${account.token}`;
+          const startedAt = Date.now(), info = { ...reserveCapture(), sessionId, method: 'GET', routing: { mode: config.mode, reason: pinned ? 'session_pin' : 'model_discovery', attempt: 1, requestedModel: '', actualModel: '' } };
+          let response, text;
+          try { response = await fetch(url, { headers, signal: AbortSignal.timeout(3000) }); text = await response.text(); }
+          catch { try { record(new URL(url).pathname, 502, Date.now() - startedAt, Buffer.alloc(0), Buffer.from('{"error":"model discovery failed"}'), false, {}, '', account.id, account.name, info); } catch {} return []; }
+          try { record(new URL(url).pathname, response.status, Date.now() - startedAt, Buffer.alloc(0), Buffer.from(text), false, {}, '', account.id, account.name, info); } catch {}
+          if (!response.ok) return [];
+          const body = JSON.parse(text); return (Array.isArray(body.data) ? body.data : []).map(model => model.id);
+        } catch { return []; }
+      })();
+      entry = { at: Date.now(), request }; modelCache.set(cacheKey, entry);
+    }
+    return modelDefaults(await entry.request, explicit);
+  }
+  // Live view of sessions that recently went through the proxy, plus per-session account pins.
+  function sessions() {
+    const now = Date.now();
+    for (const [id, e] of live) if (!e.inflight && now - e.lastAt > LIVE_TTL) live.delete(id);
+    const items = [...live].map(([id, e]) => ({ id, ...e, running: e.inflight > 0, routeAccountId: config.sessionRoutes[id] || '' }));
+    return { items, routes: { ...config.sessionRoutes }, accounts: config.accounts.map(a => ({ id: a.id, name: a.name, enabled: a.enabled })), mode: config.mode, selected: config.selected };
+  }
+  function setSessionRoute(sessionId, accountId) {
+    if (typeof sessionId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) throw new Error('会话 ID 无效');
+    const id = sessionId.toLowerCase();
+    const routes = { ...config.sessionRoutes };
+    if (!accountId) delete routes[id];
+    else {
+      if (!config.accounts.some(a => a.id === accountId && a.enabled)) throw new Error('账号不存在或已禁用');
+      delete routes[id]; routes[id] = accountId;
+      const keys = Object.keys(routes);
+      for (const k of keys.slice(0, Math.max(0, keys.length - SESSION_ROUTES_MAX))) delete routes[k];
+    }
+    const next = { ...config, sessionRoutes: routes };
+    atomicJSON(file, next);
+    config = next;
+    return sessions();
+  }
+  return { status, save, importSettings, setup, handle, clientEnv, modelEnvForSession, sessions, setSessionRoute, reset: () => { health.clear(); return status(); } };
 }
 module.exports = { createRouter, parseEnvInput };

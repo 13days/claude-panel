@@ -1,0 +1,27 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+test('external transcript updates move existing sessions ahead of stale CLI history', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const start = source.indexOf('function listSessions() {');
+  const end = source.indexOf('function transcriptPathFor(', start);
+  const context = vm.createContext({
+    path,
+    sessionStore: { read: () => ({ older: { title: 'Renamed older session' }, removed: { deleted: true } }) },
+    transcriptFiles: () => ({ sessionFiles: ['/sessions/older.jsonl', '/sessions/recent.jsonl', '/sessions/new-cli.jsonl', '/sessions/removed.jsonl'] }),
+    readHistory: () => [{ sessionId: 'older', display: 'Old title', timestamp: 100 }, { sessionId: 'recent', display: 'Recent', timestamp: 200 }],
+    fs: { statSync: file => ({ mtimeMs: file.includes('older') ? 500 : file.includes('new-cli') ? 300 : 200 }) },
+    transcriptHead: () => ({ title: 'CLI print session', cwd: '/project' }),
+    latestTranscriptPrompt: () => ({ title: '', at: 0 }),
+    isManualTitle: require('../session-store').isManualTitle,
+    activeChats: new Map(),
+  });
+  vm.runInContext(source.slice(start, end), context);
+  const sessions = vm.runInContext('listSessions()', context);
+  assert.deepEqual(Array.from(sessions, item => item.id), ['older', 'new-cli', 'recent']);
+  assert.equal(sessions[0].last, 500);
+  assert.equal(sessions[0].title, 'Renamed older session');
+});

@@ -1,0 +1,333 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+const { createFeishuGateway, contextKey, messageUUID } = require('../feishu-gateway');
+const { createChatJob } = require('../chat-job');
+
+async function fixture(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'panel-feishu-test-'));
+  const calls = [], sent = [], updated = [], jobs = new Map(), handlers = {}, policies = [], reactions = [];
+  let clock = Date.now(), count = 0;
+  const rows = [{ id: '11111111-1111-4111-8111-111111111111', title: 'First session', project: dir }, { id: '22222222-2222-4222-8222-222222222222', title: 'Second session', project: dir }];
+  const channel = {
+    botIdentity: { name: 'Test bot' }, on: (event, handler) => { handlers[event] = handler; }, connect: async () => {}, disconnect: async () => {},
+    send: async (chatId, content, options) => { const messageId = 'out_' + ++count; sent.push({ messageId, chatId, content, options }); return { messageId }; },
+    addReaction: async (messageId, emojiType) => { const id = 'reaction_' + messageId; reactions.push({ action: 'add', messageId, emojiType, id }); return id; },
+    removeReaction: async (messageId, id) => { reactions.push({ action: 'remove', messageId, id }); },
+    updateCard: async (id, card) => { updated.push({ id, card }); },
+    downloadResource: async () => Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+  };
+  const panel = {
+    sessions: () => rows, projects: () => [dir], running: id => jobs.has(id), history: () => [{ role: 'assistant', text: 'Saved reply' }],
+    submit: async input => {
+      calls.push(input); if (!rows.some(item => item.id === input.sessionId)) rows.unshift({ id: input.sessionId, project: input.cwd, title: input.prompt });
+      let job = jobs.get(input.sessionId); if (!job) { job = createChatJob({ sessionId: input.sessionId }); jobs.set(input.sessionId, job); }
+      const messageId = input.messageId;
+      job.publish('turn', { id: messageId, messageId }); job.publish('tool', { id: 'tool_' + messageId, messageId, name: 'Read', input: { file_path: 'README.md' } });
+      job.publish('tool_result', { id: 'tool_' + messageId, messageId, output: 'README contents' }); job.publish('text', { messageId, text: 'A complete response.' }); job.publish('done', { messageId });
+    },
+    watch: (id, listener) => jobs.get(id).listen(listener),
+    rename: async (id, title) => { rows.find(item => item.id === id).title = title; }, stop: async id => { calls.push({ stop: id }); },
+  };
+  const runtime = { status: () => ({ supported: true, keepAwake: false, autoStart: false }), keepAwake() {} };
+  const options = { dir, panel, runtime, replyURL: 'http://127.0.0.1:4321/api/feishu/reply', channelFactory: options => { policies.push(options.policy); return channel; }, now: () => clock };
+  const gateway = createFeishuGateway(options);
+  await gateway.configure({ enabled: true, appId: 'cli_test_app', appSecret: 'fake-test-secret', defaultProject: dir });
+  const msg = (content, extra = {}) => ({ messageId: 'incoming_' + ++count, chatId: 'oc_private', senderId: 'ou_owner', chatType: 'p2p', content, ...extra });
+  const pair = async (senderId = 'ou_owner') => { const code = gateway.newPairing().command; await gateway.receive(msg(code, { senderId })); };
+  t.after(async () => { await gateway.stop(); fs.rmSync(dir, { recursive: true, force: true }); });
+  return { gateway, panel, calls, sent, updated, rows, dir, msg, pair, options, channel, handlers, policies, reactions, advance: value => { clock += value; } };
+}
+
+test('only a paired owner can access sessions or invoke Claude; pairing is single use and secrets stay redacted', async t => {
+  const f = await fixture(t);
+  await f.gateway.receive(f.msg('/sessions')); assert.equal(f.calls.length, 0); assert.match(f.sent.at(-1).content.post.zh_cn.content[0][0].text, /尚未配对/);
+  const command = f.gateway.newPairing().command;
+  await f.gateway.receive(f.msg(command)); await f.gateway.receive(f.msg(command, { senderId: 'ou_stranger' }));
+  assert.deepEqual(f.gateway.status().config.allowedUserIds, ['ou_owner']);
+  await f.gateway.receive(f.msg('Read this project', { senderId: 'ou_stranger' })); assert.equal(f.calls.length, 0);
+  assert.equal(JSON.stringify(f.gateway.status()).includes('fake-test-secret'), false);
+  if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(f.dir, 'panel-feishu.json')).mode & 0o777, 0o600);
+});
+
+test('session list numbers remain stable after reordering; switching changes the binding and replies to older cards preserve it', async t => {
+  const f = await fixture(t); await f.pair(); await f.gateway.receive(f.msg('/sessions'));
+  f.rows.reverse(); await f.gateway.receive(f.msg('/switch 1'));
+  const firstCard = f.sent.at(-1).messageId;
+  await f.gateway.receive(f.msg('/sessions')); await f.gateway.receive(f.msg('/switch 1'));
+  await f.gateway.receive(f.msg('Question for the first card', { replyToMessageId: firstCard }));
+  assert.equal(f.calls.at(-1).sessionId, '22222222-2222-4222-8222-222222222222');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.match(JSON.stringify(f.updated.at(-1).card), /A complete response/); assert.match(JSON.stringify(f.updated.at(-1).card), /README contents/);
+});
+
+test('new project sessions, queue/steer modes and images reach the same Panel API without duplicate execution', async t => {
+  const f = await fixture(t); await f.pair(); await f.gateway.receive(f.msg('/new 1'));
+  const first = f.msg('First task'); await f.gateway.receive(first); await f.gateway.receive(first);
+  assert.equal(f.calls.length, 1);
+  const id = f.calls[0].sessionId;
+  await f.gateway.receive(f.msg('/queue Next task')); await f.gateway.receive(f.msg('/steer Change direction'));
+  assert.equal(f.calls[1].mode, 'queue'); assert.equal(f.calls[2].mode, 'steer'); assert.equal(f.calls[2].sessionId, id);
+  await f.gateway.receive(f.msg('', { resources: [{ type: 'image', fileKey: 'img_test' }] }));
+  assert.equal(f.calls.at(-1).images[0].mimeType, 'image/png');
+  assert.equal(f.calls[0].messageId, messageUUID(first.messageId));
+});
+
+test('card actions cannot be used by another owner and groups require an allowlist plus mention', async t => {
+  const f = await fixture(t); await f.pair(); await f.pair('ou_second');
+  const action = { action: { value: { owner: 'ou_owner', action: 'switch', id: f.rows[0].id, key: contextKey(f.msg('')) } }, operator: { openId: 'ou_second' }, chatId: 'oc_private', messageId: 'card_id' };
+  const before = f.sent.length; await f.gateway.action(action); assert.equal(f.sent.length, before);
+  await f.gateway.receive(f.msg('Run', { chatType: 'group', chatId: 'oc_group', mentionedBot: true })); assert.equal(f.calls.length, 0);
+  await f.gateway.configure({ allowedChatIds: ['oc_group'] });
+  await f.gateway.receive(f.msg('Run', { chatType: 'group', chatId: 'oc_group', mentionedBot: false })); assert.equal(f.calls.length, 0);
+  await f.gateway.receive(f.msg('Run', { chatType: 'group', chatId: 'oc_group', mentionedBot: true })); assert.equal(f.calls.length, 1);
+});
+
+test('paired users, selections and processed receipts survive a gateway restart', async t => {
+  const f = await fixture(t); await f.pair(); await f.gateway.receive(f.msg('/sessions')); await f.gateway.receive(f.msg('/switch 2'));
+  const task = f.msg('Persisted task'); await f.gateway.receive(task); const id = f.calls.at(-1).sessionId;
+  await f.gateway.stop(); const restored = createFeishuGateway(f.options); await restored.start();
+  try {
+    await restored.receive(task); assert.equal(f.calls.length, 1);
+    await restored.receive(f.msg('Continue after restart')); assert.equal(f.calls.at(-1).sessionId, id);
+  } finally { await restored.stop(); }
+});
+
+test('expired pairing codes cannot authorize a new user', async t => {
+  const f = await fixture(t), command = f.gateway.newPairing().command; f.advance(11 * 60 * 1000);
+  await f.gateway.receive(f.msg(command)); assert.equal(f.gateway.status().config.allowedUserIds.length, 0);
+});
+
+
+test('explicit switches and new sessions override the session of a replied-to card', async t => {
+  const f = await fixture(t); await f.pair(); await f.gateway.receive(f.msg('/sessions')); await f.gateway.receive(f.msg('/switch 1'));
+  const oldCard = f.sent.at(-1).messageId, oldId = f.rows[0].id;
+  await f.gateway.receive(f.msg('/switch 2', { replyToMessageId: oldCard }));
+  await f.gateway.receive(f.msg('Continue the selected session'));
+  assert.equal(f.calls.at(-1).sessionId, f.rows[1].id);
+  await f.gateway.receive(f.msg('/new 1', { replyToMessageId: oldCard }));
+  await f.gateway.receive(f.msg('Continue the new project'));
+  assert.notEqual(f.calls.at(-1).sessionId, oldId);
+});
+
+test('a transient final card update failure is retried instead of losing the completed reply', async t => {
+  const f = await fixture(t); await f.pair();
+  const update = f.channel.updateCard; let attempts = 0;
+  f.channel.updateCard = async (...args) => { if (++attempts === 1) throw new Error('temporary rate limit'); return update(...args); };
+  await f.gateway.receive(f.msg('Retry card delivery'));
+  await new Promise(resolve => setTimeout(resolve, 1150));
+  assert.equal(attempts, 2); assert.match(JSON.stringify(f.updated.at(-1).card), /A complete response/);
+});
+
+test('unknown groups and senders are recorded before authorization and can then be selected explicitly', async t => {
+  const f = await fixture(t);
+  const group = { chatType: 'group', chatId: 'oc_discovered', senderId: 'ou_discovered', senderName: '发现的用户', mentionedBot: true };
+  await f.gateway.receive(f.msg('还未放行的消息', group));
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.gateway.status().inbox.groups[0].id, 'oc_discovered');
+  assert.equal(f.gateway.status().inbox.users[0].name, '发现的用户');
+  assert.equal((await f.gateway.messages()).items[0].content, '还未放行的消息');
+  assert.equal(f.policies[0].groupAllowlist, undefined, 'SDK must not discard undiscovered groups before the gateway can record them');
+  await f.gateway.configure({ allowedChatIds: ['oc_discovered'], allowedUserIds: ['ou_discovered'] });
+  await f.gateway.receive(f.msg('现在可以执行', group));
+  assert.equal(f.calls.length, 1);
+  assert.equal((await f.gateway.messages()).items[0].access, 'allowed');
+});
+
+test('open group and user modes are independent, retain mention requirements, and can be revoked', async t => {
+  const f = await fixture(t); await f.pair();
+  const group = { chatType: 'group', chatId: 'oc_any_group', senderId: 'ou_any_user', mentionedBot: true };
+  await f.gateway.configure({ allowAllGroups: true });
+  await f.gateway.receive(f.msg('放行群内无需单独授权', group)); assert.equal(f.calls.length, 1);
+  await f.gateway.configure({ allowAllUsers: true });
+  await f.gateway.receive(f.msg('仍需要提及', { ...group, mentionedBot: false })); assert.equal(f.calls.length, 1);
+  assert.equal((await f.gateway.messages()).items[0].access, 'needs_mention');
+  await f.gateway.receive(f.msg('公开模式允许执行', group)); assert.equal(f.calls.length, 2);
+  await f.gateway.configure({ allowAllGroups: false, allowAllUsers: false });
+  await f.gateway.receive(f.msg('权限已撤回', group)); assert.equal(f.calls.length, 2);
+});
+
+test('group card clicks cannot bypass a revoked group permission by masquerading as a private chat', async t => {
+  const f = await fixture(t); await f.pair(); await f.gateway.configure({ allowedChatIds: ['oc_group'] });
+  await f.gateway.receive(f.msg('/sessions', { chatType: 'group', chatId: 'oc_group', mentionedBot: true }));
+  await f.gateway.configure({ allowedChatIds: [] });
+  const before = f.sent.length;
+  await f.gateway.action({ action: { value: { action: 'switch', id: f.rows[0].id, owner: 'ou_owner', key: JSON.stringify(['ou_owner', 'oc_group', 'main']) } }, operator: { openId: 'ou_owner' }, chatId: 'oc_group', messageId: 'old-card' });
+  assert.equal(f.sent.length, before);
+});
+
+test('session pagination callbacks keep visible global numbers consistent with /switch', async t => {
+  const f = await fixture(t); await f.pair();
+  for (let i = 2; i < 13; i++) f.rows.push({ id: `session-${i}`, title: `会话 ${i}`, project: f.dir });
+  await f.gateway.receive(f.msg('/sessions'));
+  await f.gateway.action({ action: { value: { action: 'sessions', page: 1, owner: 'ou_owner', key: contextKey(f.msg('')) } }, operator: { openId: 'ou_owner' }, chatId: 'oc_private', messageId: 'list-card' });
+  assert.match(JSON.stringify(f.sent.at(-1)), /6\. /);
+  await f.gateway.receive(f.msg('/switch 6'));
+  await f.gateway.receive(f.msg('继续分页选择的会话'));
+  assert.equal(f.calls.at(-1).sessionId, f.rows[5].id);
+});
+
+test('changing access permissions preserves the live connection and task card updates', async t => {
+  const f = await fixture(t); await f.pair();
+  let disconnects = 0;
+  f.channel.disconnect = async () => { disconnects++; };
+  await f.gateway.receive(f.msg('保持任务卡片更新'));
+  await f.gateway.configure({ allowAllUsers: true, allowAllGroups: true });
+  assert.equal(disconnects, 0);
+  assert.equal(f.policies.length, 1);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.match(JSON.stringify(f.updated.at(-1).card), /A complete response/);
+});
+
+test('private chats, groups and topics create separate default-project sessions and share bindings within a group', async t => {
+  const f = await fixture(t); await f.pair(); await f.pair('ou_second');
+  await f.gateway.configure({ allowAllGroups: true });
+  const group = { chatType: 'group', chatId: 'oc_group', mentionedBot: true };
+  await f.gateway.receive(f.msg('私聊'));
+  const privateId = f.calls.at(-1).sessionId;
+  await f.gateway.receive(f.msg('普通群', group));
+  const groupId = f.calls.at(-1).sessionId;
+  await f.gateway.receive(f.msg('普通回复', { ...group, rootId: 'om_ordinary', replyToMessageId: 'om_ordinary', senderId: 'ou_second' }));
+  assert.equal(f.calls.at(-1).sessionId, groupId);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(f.sent.at(-1).options.replyInThread, false);
+  await f.gateway.receive(f.msg('话题一首条', { ...group, threadId: 'omt_one' }));
+  const oneId = f.calls.at(-1).sessionId;
+  await f.gateway.receive(f.msg('话题二首条', { ...group, threadId: 'omt_two' }));
+  const twoId = f.calls.at(-1).sessionId;
+  await f.gateway.receive(f.msg('话题一回复', { ...group, threadId: 'omt_one', rootId: 'om_topic_root', senderId: 'ou_second' }));
+  assert.equal(f.calls.at(-1).sessionId, oneId);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(f.sent.at(-1).options.replyInThread, true);
+  await f.gateway.receive(f.msg('另一个群', { ...group, chatId: 'oc_other_group' }));
+  assert.equal(new Set([privateId, groupId, oneId, twoId, f.calls.at(-1).sessionId]).size, 5);
+  assert.ok(f.calls.every(call => call.cwd === fs.realpathSync(f.dir)));
+  assert.equal((await f.gateway.messages({ chatId: 'oc_group' })).items[0].threadId, 'omt_one');
+});
+
+test('topic card switches affect only their original topic and survive restart', async t => {
+  const f = await fixture(t); await f.pair(); await f.gateway.configure({ allowAllGroups: true, allowedChatIds: ['oc_group'] });
+  const group = { chatType: 'group', chatId: 'oc_group', mentionedBot: true };
+  const topic = { ...group, threadId: 'omt_one' };
+  await f.gateway.receive(f.msg('话题一', topic)); const original = f.calls.at(-1).sessionId;
+  await f.gateway.receive(f.msg('话题二', { ...group, threadId: 'omt_two' })); const other = f.calls.at(-1).sessionId;
+  await f.gateway.receive(f.msg('/sessions', topic));
+  const sent = f.sent.at(-1), key = contextKey(f.msg('', topic)), selected = f.rows.find(row => row.id !== original && row.id !== other);
+  await f.gateway.action({ messageId: sent.messageId, chatId: group.chatId, operator: { openId: 'ou_owner' }, action: { value: { owner: 'ou_owner', key, action: 'switch', id: selected.id } } });
+  assert.equal(f.sent.at(-1).options.replyInThread, true);
+  await f.gateway.receive(f.msg('继续话题一', topic)); assert.equal(f.calls.at(-1).sessionId, selected.id);
+  await f.gateway.receive(f.msg('继续话题二', { ...group, threadId: 'omt_two' })); assert.equal(f.calls.at(-1).sessionId, other);
+  await f.gateway.stop(); const restored = createFeishuGateway(f.options); await restored.start();
+  try {
+    await restored.receive(f.msg('重启后继续话题一', topic)); assert.equal(f.calls.at(-1).sessionId, selected.id);
+    await restored.receive(f.msg('重启后继续话题二', { ...group, threadId: 'omt_two' })); assert.equal(f.calls.at(-1).sessionId, other);
+  } finally { await restored.stop(); }
+});
+
+test('/current and /new use the default project without rebinding other conversations', async t => {
+  const f = await fixture(t); await f.pair();
+  await f.gateway.receive(f.msg('/current'));
+  const first = JSON.parse(fs.readFileSync(path.join(f.dir, 'panel-feishu-state.json'))).bindings[contextKey(f.msg(''))];
+  assert.equal(first.cwd, fs.realpathSync(f.dir));
+  await f.gateway.receive(f.msg('使用当前绑定')); assert.equal(f.calls.at(-1).sessionId, first.id);
+  await f.gateway.receive(f.msg('/new'));
+  await f.gateway.receive(f.msg('使用新绑定')); assert.notEqual(f.calls.at(-1).sessionId, first.id);
+  assert.equal(f.calls.at(-1).cwd, fs.realpathSync(f.dir));
+});
+
+test('legacy bindings migrate only within their original group and never leak into a topic', async t => {
+  const f = await fixture(t); await f.pair(); await f.gateway.configure({ allowAllGroups: true });
+  await f.gateway.stop();
+  const file = path.join(f.dir, 'panel-feishu-state.json'), saved = JSON.parse(fs.readFileSync(file));
+  saved.bindings[JSON.stringify(['ou_owner', 'oc_group', 'main'])] = { id: f.rows[0].id, cwd: f.dir };
+  fs.writeFileSync(file, JSON.stringify(saved));
+  const restored = createFeishuGateway(f.options); await restored.start();
+  try {
+    const group = { chatType: 'group', chatId: 'oc_group', mentionedBot: true };
+    await restored.receive(f.msg('继续旧群会话', group)); assert.equal(f.calls.at(-1).sessionId, f.rows[0].id);
+    await restored.receive(f.msg('独立的新话题', { ...group, threadId: 'omt_fresh' }));
+    assert.notEqual(f.calls.at(-1).sessionId, saved.bindings[JSON.stringify(['ou_owner', 'oc_group', 'main'])].id);
+  } finally { await restored.stop(); }
+});
+
+test('open groups hide session controls and tool details while explicitly selected groups retain them', async t => {
+  const f = await fixture(t); await f.pair(); await f.gateway.configure({ allowAllGroups: true });
+  const group = { chatType: 'group', chatId: 'oc_open', mentionedBot: true, threadId: 'omt_open' };
+  await f.gateway.receive(f.msg('公开群任务', group));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  let rendered = JSON.stringify(f.sent.at(-1).content);
+  assert.equal(f.sent.at(-1).content.post.zh_cn.content[0][0].text, 'A complete response.');
+  assert.equal(f.updated.length, 0);
+  assert.deepEqual(f.reactions.map(x => x.action), ['add', 'remove']);
+  assert.match(rendered, /A complete response/);
+  assert.doesNotMatch(rendered, /README contents|README.md|会话信息|会话列表|查看会话|behaviors/);
+  assert.equal(rendered.includes(f.dir), false);
+  await f.gateway.receive(f.msg('/sessions', group)); assert.equal(f.sent.at(-1).content.card, undefined);
+  await f.gateway.configure({ allowedChatIds: ['oc_open'] });
+  await f.gateway.receive(f.msg('逐项授权群任务', group));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  rendered = JSON.stringify(f.updated.at(-1).card);
+  assert.match(rendered, /README contents/); assert.match(rendered, /会话信息/); assert.match(rendered, /查看会话/);
+  await f.gateway.receive(f.msg('/sessions', group)); assert.ok(f.sent.at(-1).content.card);
+});
+
+test('delivery capabilities keep each turn in its original chat/topic and enforce expiration and current access', async t => {
+  const f = await fixture(t); await f.pair(); await f.gateway.configure({ allowAllGroups: true });
+  const tokenOf = call => call.gatewayContext.match(/"token":"([a-f0-9]+)"/)[1];
+  await f.gateway.receive(f.msg('私聊发卡片'));
+  const dmToken = tokenOf(f.calls.at(-1));
+  const group = { chatType: 'group', chatId: 'oc_group', threadId: 'omt_one', mentionedBot: true };
+  await f.gateway.receive(f.msg('话题一发卡片', group)); const one = tokenOf(f.calls.at(-1));
+  await f.gateway.receive(f.msg('话题二发卡片', { ...group, threadId: 'omt_two' })); const two = tokenOf(f.calls.at(-1));
+  assert.notEqual(one, two);
+  assert.equal(f.calls.at(-1).prompt, '话题二发卡片');
+  assert.equal(f.calls.at(-1).gatewayContext.includes('fake-test-secret'), false);
+  let result = await f.gateway.sendReply({ token: one, text: '原话题回复' });
+  assert.equal(result.threadId, 'omt_one'); assert.equal(f.sent.at(-1).chatId, 'oc_group'); assert.equal(f.sent.at(-1).options.replyInThread, true);
+  result = await f.gateway.sendReply({ token: dmToken, text: '原私聊回复' }); assert.equal(result.chatId, 'oc_private'); assert.equal(f.sent.at(-1).options.replyInThread, false);
+  await assert.rejects(f.gateway.sendReply({ token: two, text: '不能改目标', chatId: 'oc_private' }), /不能覆盖/);
+  await f.gateway.configure({ allowAllGroups: false });
+  await assert.rejects(f.gateway.sendReply({ token: two, text: '撤权后禁止' }), /未获准/);
+  f.advance(2 * 60 * 60 * 1000 + 1);
+  await assert.rejects(f.gateway.sendReply({ token: dmToken, text: '过期后禁止' }), /过期/);
+});
+
+test('anyone may mention the bot in allowed groups, while disabled users remain blocked everywhere and logged', async t => {
+  const f = await fixture(t);
+  await f.gateway.configure({ allowedChatIds: ['oc_group'] });
+  const group = { senderId: 'ou_visitor', chatId: 'oc_group', chatType: 'group', threadId: 'omt_topic', mentionedBot: true };
+  await f.gateway.receive(f.msg('访客首次提及', group)); assert.equal(f.calls.length, 1);
+  const originalToken = f.calls.at(-1).gatewayContext.match(/"token":"([a-f0-9]+)"/)[1];
+  assert.equal(f.gateway.status().inbox.users.find(item => item.id === group.senderId).mentionCount, 1);
+  await f.gateway.receive(f.msg('访客私聊', { senderId: group.senderId })); assert.equal(f.calls.length, 1);
+  await f.gateway.configure({ disabledUserIds: [group.senderId], allowAllUsers: true, allowAllGroups: true });
+  const before = f.sent.length;
+  await f.gateway.receive(f.msg('被禁用后在群里提及', group));
+  await f.gateway.receive(f.msg('被禁用后私聊', { senderId: group.senderId }));
+  await f.gateway.receive(f.msg(f.gateway.newPairing().command, { senderId: group.senderId }));
+  await assert.rejects(f.gateway.sendReply({ token: originalToken, text: '禁用后禁止额外发送' }), /未获准/);
+  assert.equal(f.calls.length, 1); assert.equal(f.sent.length, before);
+  const records = (await f.gateway.messages()).items;
+  assert.equal(records[0].access, 'disabled_user'); assert.equal(records[2].access, 'disabled_user');
+  const card = { messageId: 'old-card', chatId: group.chatId, operator: { openId: group.senderId }, action: { value: { owner: group.senderId, key: contextKey(f.msg('', group)), action: 'switch', id: f.rows[0].id } } };
+  await f.gateway.action(card); assert.equal(f.sent.length, before);
+  await f.gateway.stop(); const restored = createFeishuGateway(f.options); await restored.start();
+  try {
+    await restored.receive(f.msg('重启后禁用仍在', group)); assert.equal(f.calls.length, 1);
+    await restored.configure({ disabledUserIds: [], allowAllUsers: false, allowAllGroups: false });
+    await restored.receive(f.msg('解除禁用后群里可用', group)); assert.equal(f.calls.length, 2);
+    await restored.receive(f.msg('私聊仍需授权', { senderId: group.senderId })); assert.equal(f.calls.length, 2);
+  } finally { await restored.stop(); }
+});
+
+test('idle sockets are not reported as connected and can be restarted; reconnection clears stale DNS errors', async t => {
+  const f = await fixture(t);
+  f.channel.getConnectionStatus = () => ({ state: 'idle' });
+  assert.equal(f.gateway.status().phase, 'reconnecting');
+  const connections = f.policies.length;
+  await f.gateway.start(); assert.equal(f.policies.length, connections + 1);
+  f.handlers.error(new Error('[ws],getaddrinfo ENOTFOUND open.feishu.cn'));
+  assert.match(f.gateway.status().lastError, /ENOTFOUND/);
+  f.channel.getConnectionStatus = () => ({ state: 'connected' });
+  f.handlers.reconnected(); assert.equal(f.gateway.status().phase, 'connected'); assert.equal(f.gateway.status().lastError, '');
+});

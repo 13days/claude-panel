@@ -17,8 +17,8 @@ async function fixture(t, handlers) {
     fn(req, res, Buffer.concat(chunks).toString());
   }));
   const urls = await Promise.all(servers.map(listen));
-  const captures = [];
-  const router = createRouter({ dir, port: 4322, record: (...args) => captures.push(args) });
+  const captures = []; let sequence = 0;
+  const router = createRouter({ dir, port: 4322, record: (...args) => captures.push(args), reserveCapture: () => ({ id: ++sequence, startedAt: new Date().toISOString() }) });
   const proxy = http.createServer(router.handle);
   const url = await listen(proxy);
   t.after(async () => {
@@ -29,6 +29,29 @@ async function fixture(t, handlers) {
   const send = (data = { model: 'claude-sonnet', messages: [] }, options = {}) => fetch(url + '/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer client-credential', 'x-api-key': 'old-client-key', ...options.headers }, body: JSON.stringify(data), signal: options.signal });
   return { dir, router, accounts, send, captures, url };
 }
+
+test('model discovery uses the pinned account, authenticates upstream, and caches results', async t => {
+  // Explicit model env takes precedence over discovery; keep the host shell's values out of this test.
+  for (const key of ['ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_SMALL_FAST_MODEL']) {
+    if (!(key in process.env)) continue;
+    const saved = process.env[key]; delete process.env[key];
+    t.after(() => { process.env[key] = saved; });
+  }
+  const hits = [0, 0];
+  const f = await fixture(t, [0, 1].map(index => (req, res) => {
+    hits[index]++;
+    assert.equal(req.url, '/v1/models');
+    assert.equal(req.headers.authorization, `Bearer secret-${index}`);
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ data: [{ id: `auto/claude-haiku-${index + 5}-5` }] }));
+  }));
+  f.router.save({ mode: 'manual', selected: 'a0', accounts: f.accounts });
+  const sid = '11111111-1111-4111-8111-111111111111';
+  f.router.setSessionRoute(sid, 'a1');
+  assert.equal((await f.router.modelEnvForSession(sid)).ANTHROPIC_DEFAULT_HAIKU_MODEL, 'auto/claude-haiku-6-5');
+  assert.equal((await f.router.modelEnvForSession(sid)).ANTHROPIC_SMALL_FAST_MODEL, 'auto/claude-haiku-6-5');
+  assert.deepEqual(hits, [0, 1]);
+});
 const reply = (req, res, raw) => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ id: req.headers.authorization, model: JSON.parse(raw).model, apiKey: req.headers['x-api-key'] || null })); };
 test('manual switching applies to the next request, preserves hidden tokens and maps models', async t => {
   const f = await fixture(t, [reply, reply]);
@@ -187,4 +210,69 @@ test('editing a pasted account retains extra env and updates its credentials', a
   f.router.save(status);
   const stored = JSON.parse(fs.readFileSync(path.join(f.dir, 'panel-proxy.json'))).accounts[0]; assert.equal(stored.env.FLAG, 'true'); assert.equal(stored.env.ANTHROPIC_AUTH_TOKEN, 'new-token');
   assert.equal((await (await f.send()).json()).id, 'Bearer new-token');
+});
+
+test('session pins route one session to its own account while others follow the global route', async t => {
+  const f = await fixture(t, [reply, reply]);
+  f.router.save({ mode: 'manual', selected: 'a0', accounts: f.accounts });
+  const sid = '11111111-2222-4333-8444-555555555555';
+  const body = id => ({ model: 'claude-sonnet', messages: [], metadata: { user_id: `user_abc_account__session_${id}` } });
+  f.router.setSessionRoute(sid, 'a1');
+  assert.equal((await (await f.send(body(sid))).json()).id, 'Bearer secret-1');
+  assert.equal((await (await f.send(body('99999999-2222-4333-8444-555555555555'))).json()).id, 'Bearer secret-0');
+  assert.equal((await (await f.send({ model: 'claude-sonnet', messages: [], metadata: { user_id: JSON.stringify({ session_id: sid }) } })).json()).id, 'Bearer secret-1');
+  const live = f.router.sessions().items.find(s => s.id === sid);
+  assert.equal(live.accountId, 'a1'); assert.equal(live.routeAccountId, 'a1'); assert.equal(live.running, false);
+  assert.equal(createRouter({ dir: f.dir, port: 4322 }).sessions().routes[sid], 'a1');
+  f.router.setSessionRoute(sid, '');
+  assert.equal((await (await f.send(body(sid))).json()).id, 'Bearer secret-0');
+  assert.throws(() => f.router.setSessionRoute(sid, 'missing'));
+});
+
+test('all API endpoints and full responses over 8 MB are captured, including failed failover attempts', async t => {
+  const large = 'x'.repeat(8 * 1024 * 1024 + 123);
+  const f = await fixture(t, [(req, res) => { res.writeHead(429); res.end('complete rate limit body'); }, (req, res) => { res.end(req.url.includes('/models') ? large : '{"ok":true}'); }]);
+  f.router.save({ mode: 'failover', accounts: f.accounts });
+  const response = await fetch(f.url + '/v1/models'); assert.equal((await response.text()).length, large.length);
+  assert.equal(f.captures.length, 2);
+  assert.equal(f.captures[0][0], '/v1/models'); assert.equal(f.captures[0][1], 429);
+  assert.equal(f.captures[0][4].toString(), 'complete rate limit body');
+  assert.equal(f.captures[1][4].length, large.length);
+  assert.equal(f.captures[0][10].id, 1); assert.equal(f.captures[1][10].id, 2);
+  assert.equal(f.captures[1][10].requestOrder, 1);
+  assert.equal(f.captures[1][10].routing.attempt, 2);
+  const count = await fetch(f.url + '/v1/messages/count_tokens', { method: 'POST', body: JSON.stringify({ model: 'haiku', messages: [] }) }); await count.text();
+  assert.equal(f.captures.at(-1)[0], '/v1/messages/count_tokens');
+});
+
+test('arrival sequence stays stable when concurrent session requests complete in reverse order', async t => {
+  let finishFirst, entered;
+  const firstEntered = new Promise(resolve => { entered = resolve; });
+  const f = await fixture(t, [(req, res, body) => {
+    if (JSON.parse(body).tag === 'first') { finishFirst = () => res.end('{"id":"first"}'); entered(); }
+    else res.end('{"id":"second"}');
+  }]);
+  f.router.save({ mode: 'manual', selected: 'a0', accounts: f.accounts });
+  const sid = '11111111-1111-4111-8111-111111111111';
+  const first = f.send({ tag: 'first', metadata: { user_id: 'account_session_' + sid }, model: 'opus' });
+  await firstEntered;
+  await (await f.send({ tag: 'second', metadata: { user_id: 'account_session_' + sid }, model: 'haiku' })).text();
+  finishFirst(); await (await first).text();
+  assert.deepEqual(f.captures.map(args => args[10].id), [2, 1]);
+  assert.ok(f.captures.every(args => args[10].sessionId === sid));
+});
+
+test('a client disconnect before response headers is preserved as an interrupted attempt', async t => {
+  let entered; const started = new Promise(resolve => { entered = resolve; });
+  let disconnected; const closed = new Promise(resolve => { disconnected = resolve; });
+  const f = await fixture(t, [(req, res) => { res.on('close', disconnected); entered(); }]);
+  f.router.save({ mode: 'manual', selected: 'a0', accounts: f.accounts });
+  const controller = new AbortController();
+  const request = f.send({ model: 'opus', messages: [] }, { signal: controller.signal });
+  const rejected = assert.rejects(request);
+  await started; controller.abort(); await rejected;
+  await closed;
+  assert.equal(f.captures.length, 1);
+  assert.equal(f.captures[0][1], 499);
+  assert.equal(f.captures[0][10].incomplete, true);
 });

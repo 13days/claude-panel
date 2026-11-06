@@ -1,7 +1,7 @@
 {
   "name": "claude-code-panel",
-  "version": "0.15.1",
-  "description": "Claude Code 零依赖本地面板：多账号动态代理、env 配置管理、自动故障转移、请求抓包、会话回放与 Token 用量统计",
+  "version": "0.16.0",
+  "description": "Claude Code 核心零依赖本地面板：多账号动态代理、env 配置管理、自动故障转移、请求抓包、会话回放与 Token 用量统计",
   "main": "server.js",
   "bin": {
     "claude-code-panel": "./server.js"
@@ -37,6 +37,26 @@
     "index.html",
     "scripts/gen-demo-data.py",
     "proxy-router.js",
-    "panel.css"
-  ]
+    "folder-picker.js",
+    "session-store.js",
+    "chat-input.js",
+    "chat-session.js",
+    "cli-result.js",
+    "model-defaults.js",
+    "chat-job.js",
+    "feishu-gateway.js",
+    "feishu-simple-reply.js",
+    "feishu-ui.js",
+    "mac-runtime.js",
+    "panel.css",
+    "capture-store.js",
+    "chat-permissions.js",
+    "lark-setup.js",
+    "feishu-cards.js",
+    "feishu-inbox.js",
+    "feishu-markdown.js"
+  ],
+  "optionalDependencies": {
+    "@larksuiteoapi/node-sdk": "1.76.0"
+  }
 }
